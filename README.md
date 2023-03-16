@@ -25,3 +25,6 @@ This assumes a couple of things.  That your 'sh-elf-addr2line' application is in
 
 I installed dot using brew:  
   brew install graphviz
+
+Another method to view your DOT file and convert it to an image is to paste the contents of the .DOT file in this online editor: https://dreampuf.github.io/GraphvizOnline/
+
