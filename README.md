@@ -1,5 +1,7 @@
 # dcprofile
 
+This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  https://github.com/sega-dreamcast/dreamhal
+
 There is two parts:  
 1. The files you include in your project (profiler.c, profiler.h)
 2. The application that parses the data your dreamcast application generates (pvtrace).  This application is based on 
