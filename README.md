@@ -1,5 +1,7 @@
 # dcprofile
 
+STATUS BROKEN: When compiler with a dc application that has video, the screen stays black.  Will need to take a different approach to outputing to trace.txt.
+
 This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  https://github.com/sega-dreamcast/dreamhal
 
 There is two parts:  
