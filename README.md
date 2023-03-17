@@ -1,11 +1,8 @@
 # dcprofiler
 
-WARNING: If the application is already has a low framerate(~15) chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time.
+WARNING: If the application is already has a low framerate(~15) chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time. This is project is mostly useful if you have a BBA. If you only have a serial cable it will make your application run even slower since it has to push so much trace data back to the computer.
 
 This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  Checkout DreamHal here: https://github.com/sega-dreamcast/dreamhal.
-
-Requirements:
-This is only useful if you have a BBA. So much data is generated and the BBA is the only device that can transfer it fast enough to your PC.
 
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
