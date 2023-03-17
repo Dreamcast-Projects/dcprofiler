@@ -365,7 +365,7 @@ void PMCR_Disable(unsigned char which)
 /***************************************  MY CODE  ***************************************/
 
 /* Convert a pointer to a hexadecimal string */
-static void __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *buffer) {
+static int __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *buffer) {
     uintptr_t address = (uintptr_t)ptr & 0xFFFFFFFF;
     const char hex_digits[] = "0123456789abcdef";
 
@@ -389,71 +389,59 @@ static void __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char 
 	buffer[0] = hex_digits[address & 0xF];
 
     buffer[8] = '\0';
+
+	/* Assuming 8 hex characters + '0x' */
+	return 10;
 }
 
 /* Convert an unsigned long long to a string */
-static void __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
+static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
+	static const char digits[] = "0123456789";
+	int length;
     char *start = buffer;
 
     do {
-        *buffer++ = (value % 10) + '0';
+        *buffer++ = digits[value % 10];
         value /= 10;
     } while (value > 0);
+
     *buffer = '\0';
+	length = buffer - start;
 
     /* Reverse the string */
     char *end = buffer - 1;
     while (start < end) {
         char temp = *start;
-        *start = *end;
-        *end = temp;
-        start++;
-        end--;
-    }
-}
-
-/* Custom sprintf implementation that only supports %p and %llu */
-static int __attribute__ ((no_instrument_function)) my_sprintf(char *str, const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-
-    char *out = str;
-
-    while (*format != '\0') {
-        if (*format == '%') {
-            format++;
-            switch (*format) {
-                case 'p': {
-                    void *ptr = va_arg(args, void*);
-                    ptr_to_hex(ptr, out);
-                    out += 10; /* Assuming 8 hex characters + '0x' */
-                    break;
-                }
-                case 'l': {
-                    unsigned long long value = va_arg(args, unsigned long long);
-                    ull_to_str(value, out);
-                    while (*out != '\0') {
-                        out++;
-                    }
-                    break;
-                }
-                default: {
-                    /* Unsupported format specifier */
-                    return -1;
-                }
-            }
-        } else {
-            *out++ = *format;
-        }
-
-        format++;
+        *start++ = *end;
+        *end-- = temp;
     }
 
-    *out = '\0';
-    va_end(args);
-
-    return out - str;
+	return length;
 }
+
+// static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
+// 	int length;
+//     char *start = buffer;
+
+//     do {
+//         *buffer++ = (value % 10) + '0';
+//         value /= 10;
+//     } while (value > 0);
+//     *buffer = '\0';
+// 	length = buffer - start;
+
+//     /* Reverse the string */
+//     char *end = buffer - 1;
+//     while (start < end) {
+//         char temp = *start;
+//         *start = *end;
+//         *end = temp;
+//         start++;
+//         end--;
+//     }
+
+// 	return length;
+// }
 
 void main_constructor(void)
 	__attribute__ ((no_instrument_function, constructor));
@@ -474,7 +462,7 @@ static FILE *fp = NULL;
 #define BUFFER_SIZE (1024 * 8)  /* 8k buffer */
 
 static char *ptr;
-static char buffer [BUFFER_SIZE]= {0};
+static char buffer[BUFFER_SIZE] = {0};
 static size_t buffer_index;
 static size_t print_amount;
 
@@ -521,13 +509,19 @@ void main_destructor(void) {
 }
 
 void __cyg_profile_func_enter(void *this, void *callsite) {
-    //if(active && initialized)
-	print_amount = my_sprintf(ptr, ">%p-%l\n", (int *)this, PMCR_Read(1));
-	buffer_index += print_amount;
-	ptr += print_amount;
+	//if(active && initialized)
+
+	char* start = ptr;
+	*ptr++ = '>';
+	ptr += ptr_to_hex(this, ptr);
+	*ptr++ = '-';
+	ptr += ull_to_str(PMCR_Read(1), ptr);
+	*ptr++ = '\n';
+	buffer_index = ptr - buffer;
+	print_amount = ptr - start;
 
 	if((buffer_index+print_amount) >= BUFFER_SIZE) {
-		fwrite(buffer, 1, buffer_index, fp);
+		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
 	}
@@ -536,12 +530,17 @@ void __cyg_profile_func_enter(void *this, void *callsite) {
 void __cyg_profile_func_exit(void *this, void *callsite) {
     //if(active && initialized)
 
-	print_amount = my_sprintf(ptr, "<%p-%l\n", (int *)this, PMCR_Read(1));
-	buffer_index += print_amount;
-	ptr += print_amount;
+	char* start = ptr;
+	*ptr++ = '<';
+	ptr += ptr_to_hex(this, ptr);
+	*ptr++ = '-';
+	ptr += ull_to_str(PMCR_Read(1), ptr);
+	*ptr++ = '\n';
+	buffer_index = ptr - buffer;
+	print_amount = ptr - start;
 
-	if((buffer_index+print_amount) >= BUFFER_SIZE){
-		fwrite(buffer, 1, buffer_index, fp);
+	if((buffer_index+print_amount) >= BUFFER_SIZE) {
+		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
 	}
