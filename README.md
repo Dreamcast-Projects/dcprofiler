@@ -35,7 +35,7 @@ I added these to my make file to make things easier:
 
 ```
 TARGET = main.elf
-
+DATETIME := $(shell date '+%Y-%m-%d_%I-%M-%S_%p')
 ...
 
 profileip: $(TARGET)
@@ -45,6 +45,6 @@ dot:
 	/PATH/TO/pvtrace $(TARGET)
 
 image: dot
-	dot -Tjpg graph.dot -o graph.jpg
+	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
 ```
 Then after I run the application using ```make profileip``` and exiting the application, I use the command ```make image``` to generate a graph.dot and graph.jpg file.
