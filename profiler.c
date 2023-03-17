@@ -364,6 +364,118 @@ void PMCR_Disable(unsigned char which)
 
 /***************************************  MY CODE  ***************************************/
 
+static int __attribute__ ((no_instrument_function)) stringlength(char* string) {
+	int length = 0;
+
+	while(*string)
+	{
+		length++;
+		string++;
+	}
+
+	return length;
+}
+
+
+// Convert an unsigned long long to a string
+static void __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
+    if (value == 0) {
+        *buffer++ = '0';
+        *buffer = '\0';
+        return;
+    }
+
+    char *start = buffer;
+    while (value > 0) {
+        *buffer++ = '0' + (value % 10);
+        value /= 10;
+    }
+    *buffer = '\0';
+
+    // Reverse the string
+    char *end = buffer - 1;
+    while (start < end) {
+        char temp = *start;
+        *start = *end;
+        *end = temp;
+        start++;
+        end--;
+    }
+}
+
+// Convert a pointer to a hexadecimal string
+static void __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *buffer) {
+    uintptr_t address = (uintptr_t)ptr & 0xFFFFFFFF;
+    const char hex_digits[] = "0123456789abcdef";
+
+    if (address == 0) {
+        *buffer++ = '0';
+        *buffer++ = 'x';
+        *buffer++ = '0';
+        *buffer = '\0';
+        return;
+    }
+
+    *buffer++ = '0';
+    *buffer++ = 'x';
+
+	buffer[7] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[6] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[5] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[4] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[3] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[2] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[1] = hex_digits[address & 0xF];
+	address >>= 4;
+	buffer[0] = hex_digits[address & 0xF];
+	address >>= 4;
+
+    buffer[8] = '\0';
+}
+
+// Custom sprintf implementation that only supports %p and %llu
+static int __attribute__ ((no_instrument_function)) my_sprintf(char *str, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+
+    char *out = str;
+    int is_format = 0;
+
+    while (*format != '\0') {
+        if (*format == '%') {
+            is_format = 1;
+        } else if (is_format) {
+            if (*format == 'p') {
+                void *ptr = va_arg(args, void*);
+                ptr_to_hex(ptr, out);
+                out += stringlength(out);
+            } else if (*format == 'l') {
+                unsigned long long value = va_arg(args, unsigned long long);
+                ull_to_str(value, out);
+                out += stringlength(out);
+            } else {
+                // Unsupported format specifier
+                return -1;
+            }
+            is_format = 0;
+        } else {
+            *out++ = *format;
+        }
+        format++;
+    }
+
+    *out = '\0';
+    va_end(args);
+
+    return out - str;
+}
+
 void main_constructor(void)
 	__attribute__ ((no_instrument_function, constructor));
 
@@ -379,6 +491,13 @@ void __cyg_profile_func_exit(void *, void *)
 static int active = 0;
 static int initialized = 0;
 static FILE *fp = NULL;
+
+#define BUFFER_SIZE (1024 * 8)  // 8k buffer
+
+static char buffer [BUFFER_SIZE]= {0};
+static size_t buffer_index;
+static size_t print_amount;
+static char *ptr;
 
 void initializeProfiling(void) {
     initialized = 1;
@@ -406,6 +525,8 @@ void main_constructor(void) {
     if(fp != NULL)
         return;
 
+	buffer_index = 0;
+	ptr = buffer;
     fp = fopen("/pc/trace.txt", "w");
     if(fp == NULL) {
         fprintf(stderr, "Trace.txt file not opened\n");
@@ -424,11 +545,31 @@ void main_destructor(void) {
 
 void __cyg_profile_func_enter(void *this, void *callsite) {
     //if(active && initialized)
-        fprintf(fp, ">%p-%llu\n", (int *)this, PMCR_Read(1));  
+        //my_fprintf(fp, ">%p-%llu\n", (int *)this, PMCR_Read(1));
+
+	print_amount = my_sprintf(ptr, ">%p-%l\n", (int *)this, PMCR_Read(1));
+	buffer_index += print_amount;
+	ptr += print_amount;
+
+	if((buffer_index+print_amount) >= BUFFER_SIZE) {
+		fwrite(buffer, 1, buffer_index, fp);
+		buffer_index = 0;
+		ptr = buffer;
+	}
 }
 
 void __cyg_profile_func_exit(void *this, void *callsite) {
     //if(active && initialized)
-        fprintf(fp, "<%p-%llu\n", (int *)this, PMCR_Read(1));
+        //my_fprintf(fp, "<%p-%llu\n", (int *)this, PMCR_Read(1));
+
+	print_amount = my_sprintf(ptr, "<%p-%l\n", (int *)this, PMCR_Read(1));
+	buffer_index += print_amount;
+	ptr += print_amount;
+
+	if((buffer_index+print_amount) >= BUFFER_SIZE){
+		fwrite(buffer, 1, buffer_index, fp);
+		buffer_index = 0;
+		ptr = buffer;
+	}
 }
 
