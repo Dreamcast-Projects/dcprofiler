@@ -10,6 +10,8 @@ EXCLUDE_FILES = profiler.c
 # Set compiler flags
 CFLAGS = -g -finstrument-functions
 
+DATETIME := $(shell date '+%Y-%m-%d_%I-%M-%S_%p')
+
 all: clean $(TARGET)
 
 include $(KOS_BASE)/Makefile.rules
@@ -23,16 +25,16 @@ $(TARGET): $(SRCS)
 	kos-cc $(CFLAGS) -finstrument-functions-exclude-file-list=$(EXCLUDE_FILES) $^ -o $@ $(DATAOBJS) $(OBJEXTRA)
 
 profileip: $(TARGET)
-	sudo /opt/toolchains/dc-utils/dc-tool-ip -c "/opt/toolchains/dc-projects/profiling" -t 192.168.1.137 -x profile.elf
+	sudo /opt/toolchains/dc-utils/dc-tool-ip -c "." -t 192.168.1.137 -x $(TARGET)
 
 profileser: $(TARGET)
-	sudo /opt/toolchains/dc-utils/dc-tool-ser -c "/opt/toolchains/dc-projects/profiling" -t /dev/cu.usbserial-ABSCDWND -b 115200 -x profile.elf
+	sudo /opt/toolchains/dc-utils/dc-tool-ser -c "." -t /dev/cu.usbserial-ABSCDWND -b 115200 -x $(TARGET)
 
 dot: 
-	$(KOS_UTILS)/pvtrace profile.elf
+	$(KOS_UTILS)/pvtrace $(TARGET)
 
 image: dot
-	dot -Tjpg graph.dot -o graph.jpg
+	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
 
 run: $(TARGET)
 	$(KOS_SERIAL_LOADER) $(TARGET)

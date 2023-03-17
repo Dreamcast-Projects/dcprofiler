@@ -1,4 +1,7 @@
 *.o
 *.elf
+*.jpg
+*.txt
+*.dot
 .DS_Store
-.vs_code/
+.vscode/

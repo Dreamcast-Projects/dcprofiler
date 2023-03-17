@@ -396,15 +396,13 @@ static int __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *
 
 /* Convert an unsigned long long to a string */
 static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
-	static const char digits[] = "0123456789";
 	int length;
     char *start = buffer;
 
     do {
-        *buffer++ = digits[value % 10];
+        *buffer++ = (value % 10) + '0';
         value /= 10;
     } while (value > 0);
-
     *buffer = '\0';
 	length = buffer - start;
 
@@ -412,36 +410,14 @@ static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long lon
     char *end = buffer - 1;
     while (start < end) {
         char temp = *start;
-        *start++ = *end;
-        *end-- = temp;
+        *start = *end;
+        *end = temp;
+        start++;
+        end--;
     }
 
 	return length;
 }
-
-// static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
-// 	int length;
-//     char *start = buffer;
-
-//     do {
-//         *buffer++ = (value % 10) + '0';
-//         value /= 10;
-//     } while (value > 0);
-//     *buffer = '\0';
-// 	length = buffer - start;
-
-//     /* Reverse the string */
-//     char *end = buffer - 1;
-//     while (start < end) {
-//         char temp = *start;
-//         *start = *end;
-//         *end = temp;
-//         start++;
-//         end--;
-//     }
-
-// 	return length;
-// }
 
 void main_constructor(void)
 	__attribute__ ((no_instrument_function, constructor));
