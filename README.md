@@ -1,6 +1,6 @@
 # dcprofile
 
-STATUS BROKEN: When compiler with a dc application that has video, the screen stays black.  Will need to take a different approach to outputing to trace.txt.
+STATUS: WIP. If the application is already has a low framerate chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time.
 
 This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  https://github.com/sega-dreamcast/dreamhal
 
