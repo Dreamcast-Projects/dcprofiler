@@ -4,6 +4,9 @@ WARNING: If the application is already has a low framerate(~15) chances are you 
 
 This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  Checkout DreamHal here: https://github.com/sega-dreamcast/dreamhal.
 
+Requirements:
+This is only useful if you have a BBA. So much data is generated and the BBA is the only device that can transfer it fast enough to your PC.
+
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
 2. The application(pvtrace) that parses the data (trace.txt) your dreamcast application generates.  This application is based on 
