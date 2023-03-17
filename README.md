@@ -13,7 +13,7 @@ Instructions:
 1. Add profiler.c and profiler.h to you projects source directory.
 2. Edit your makefile to add '-g -finstrument-functions' to your KOS_CFLAGS and 'profiler.o' to your OBJS.
 3. Use dc-tool-ip to send your elf file to Dreamcast:
-   sudo /PATH/TO/dc-tool-ip -c "/PATH/TO/PROJECT" -t 192.168.1.137 -x main.elf
+   ```sudo /PATH/TO/dc-tool-ip -c "/PATH/TO/PROJECT" -t 192.168.1.137 -x main.elf```
 4. Profiling automatically starts when you start running the application so make sure to call shutdownProfiling() to stop profiling.
 5. Run pvtrace application on your elf with the command:
   ```pvtrace main.elf```
@@ -25,7 +25,7 @@ This assumes a couple of things.  That your 'sh-elf-addr2line' application is in
   ```dot -Tjpg graph.dot -o graph.jpg```
 
 You will need the dot application in order generate an image. Here is info how to install (https://graphviz.org/download/). I installed dot on my mac using brew:  
-  brew install graphviz
+  ```brew install graphviz```
 
 Another method to view your DOT file and convert it to an image is to paste the contents of the .DOT file in this online editor: https://dreampuf.github.io/GraphvizOnline/
 
@@ -34,7 +34,7 @@ TIPS:
 I added these to my make file to make things easier:
 
 ```
-TARGET = prog.elf
+TARGET = main.elf
 
 ...
 
