@@ -47,4 +47,4 @@ dot:
 image: dot
 	dot -Tjpg graph.dot -o graph.jpg
 ```
-
+Then after I run the application using ```make profileip``` and exiting the application, I use the command ```make image``` to generate a graph.dot and graph.jpg file.
