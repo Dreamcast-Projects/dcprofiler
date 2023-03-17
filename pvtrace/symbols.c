@@ -361,7 +361,7 @@ void write_graph_caption(FILE *fp) {
     sprintf(header, 
         "\tgraph [\n"
         "\t\tfontname = \"Helvetica-Oblique\",\n"
-        "\t\tfontsize = 18,\n"
+        "\t\tfontsize = 32,\n"
         "\t\tlabel = \"\\n\\n%s\\n%d/%d/%d @ %d:%02d %s\"\n"
         "\t];", progName, ltm->tm_mon+1, ltm->tm_mday, ltm->tm_year+1900, hour, ltm->tm_min, am_pm);
 
