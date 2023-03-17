@@ -395,9 +395,8 @@ void create_dot_file(void) {
     /* Write the table cluster */
     fprintf(fp, "subgraph cluster1 {\n\t\t"
                 "peripheries=0;\n\t\t"
-                "fontname=\"Helvetica,Arial,sans-serif\";\n\t\t"
-                "node [fontname=\"Helvetica,Arial,sans-serif\"]\n\t\t"
-                "edge [fontname=\"Helvetica,Arial,sans-serif\"]\n\n");
+                "node [fontname=\"Helvetica,Arial,sans-serif\" fontsize=22]\n\t\t"
+                "edge [fontname=\"Helvetica,Arial,sans-serif\" fontsize=22]\n\n");
     write_table(fp);
     fprintf(fp, "\t}\n\n");
 
