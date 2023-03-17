@@ -1,4 +1,4 @@
-# dcprofile
+# dcprofiler
 
 STATUS: WIP. If the application is already has a low framerate chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time.
 
