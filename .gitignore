@@ -1,2 +1,4 @@
 *.o
+*.elf
 .DS_Store
+.vs_code/
