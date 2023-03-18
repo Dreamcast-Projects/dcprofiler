@@ -1,7 +1,7 @@
 #include <kos.h>
 
 #include <stdio.h>
-#include <stdlib.h> // atexit
+#include <stdlib.h>
 #include "profiler.h"
 
 /* I use this program to test small utility functions. I test
