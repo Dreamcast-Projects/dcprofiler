@@ -364,7 +364,8 @@ void PMCR_Disable(unsigned char which)
 
 /***************************************  MY CODE  ***************************************/
 
-/* Convert a pointer to a hexadecimal string */
+/* Convert a pointer to a hexadecimal string.  We dont care about buffer[6] and buffer[7]
+   because those are always 8c as in 0x8c000000. */
 static int __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *buffer) {
     uintptr_t address = (uintptr_t)ptr & 0xFFFFFFFF;
     const char hex_digits[] = "0123456789abcdef";
@@ -387,7 +388,9 @@ static int __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *
 
 static unsigned long long startTime = 0;
 
-/* Convert an unsigned long long to a string */
+/* Convert an unsigned long long to a string and only care about the difference
+   from the last timestamp value. Delta Encoding!
+*/
 static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
 	int length;
     char *start = buffer;
