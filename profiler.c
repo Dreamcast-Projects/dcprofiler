@@ -385,14 +385,16 @@ static int __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *
 	return 6;
 }
 
-static unsigned long long startTime;
+static unsigned long long startTime = 0;
 
 /* Convert an unsigned long long to a string */
 static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
 	int length;
     char *start = buffer;
+	unsigned long long temp = value;
 
 	value -= startTime;
+	startTime = temp;
 
     do {
         *buffer++ = (value % 10) + '0';
@@ -470,7 +472,6 @@ void main_constructor(void) {
     }
 
     PMCR_Init(1, PMCR_ELAPSED_TIME_MODE, PMCR_COUNT_CPU_CYCLES);
-	startTime = PMCR_Read(1);
 }
 
 void main_destructor(void) {

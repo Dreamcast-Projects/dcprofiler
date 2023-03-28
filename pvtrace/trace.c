@@ -91,10 +91,15 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    uint64_t reference = 0;
     uint32_t base_address = 0x8C000000;
     while (!feof(tracef)) {
         fscanf(tracef, "%c%6x%llu", &type, &address, &currentCycle);
         address = base_address | address;
+
+        currentCycle += reference;
+        reference = currentCycle;
+
         calculate_total_profile_time(currentCycle);
 
         if(type == '>') {
