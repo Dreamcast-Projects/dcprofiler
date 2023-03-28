@@ -4,8 +4,8 @@ This project utilizes Moops DreamHAL perfcounter source code to count cycles.  S
 
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
-2. The application(pvtrace) that parses the data (trace.txt) your dreamcast application generates.  This application is based on 
-https://web.archive.org/web/20130528172555/http://www.ibm.com/developerworks/library/l-graphvis/ but I added a ton of stuff/details.
+2. The application(dctrace) that parses the data (trace.txt) your dreamcast application generates.  This application is based on 
+the project [HERE](https://web.archive.org/web/20130528172555/http://www.ibm.com/developerworks/library/l-graphvis/) but I added a counters so you can see how much time is spent in each function.
 
 ## Instructions:
 1. Add profiler.c and profiler.h to you projects source directory.
@@ -29,7 +29,11 @@ Another method to view your DOT file and convert it to an image is to paste the 
 
 ## TIPS:
 
-I added these to my make file to make things easier:
+1.  For any method you don't want to profile you just add ```__attribute__ ((no_instrument_function))``` to its protype or its definition (if there isnt a prototype). Or in your makefile use ```-finstrument-functions-exclude-function-list=sym,sym,...```
+
+2.  You can also ignore a whole files you dont want to profile. Just add ```-finstrument-functions-exclude-file-list=file,file,...``` to your makefile
+
+Here is an example of my Makefile:
 
 ```
 TARGET = main.elf
