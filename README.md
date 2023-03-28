@@ -1,7 +1,5 @@
 # dcprofiler
 
-WARNING: If the application is already has a low framerate(~15) chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time. This is project is mostly useful if you have a BBA. If you only have a serial cable it will make your application run even slower since it has to push so much trace data back to the computer.
-
 This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  Checkout DreamHal here: https://github.com/sega-dreamcast/dreamhal.
 
 There is two parts to this project:  
@@ -9,7 +7,7 @@ There is two parts to this project:
 2. The application(pvtrace) that parses the data (trace.txt) your dreamcast application generates.  This application is based on 
 https://web.archive.org/web/20130528172555/http://www.ibm.com/developerworks/library/l-graphvis/ but I added a ton of stuff/details.
 
-Instructions:
+## Instructions:
 1. Add profiler.c and profiler.h to you projects source directory.
 2. Edit your makefile to add '-g -finstrument-functions' to your KOS_CFLAGS and 'profiler.o' to your OBJS.
 3. Use dc-tool-ip to send your elf file to Dreamcast:
@@ -29,7 +27,7 @@ You will need the dot application in order generate an image. Here is info how t
 
 Another method to view your DOT file and convert it to an image is to paste the contents of the .DOT file in this online editor: https://dreampuf.github.io/GraphvizOnline/
 
-TIPS:
+## TIPS:
 
 I added these to my make file to make things easier:
 
@@ -48,3 +46,7 @@ image: dot
 	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
 ```
 Then after I run the application using ```make profileip``` and exiting the application, I use the command ```make image``` to generate a graph.dot and graph.jpg file.
+
+## WARNING: 
+
+If the application is already has a low framerate(~15) chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time. This is project is mostly useful if you have a BBA. If you only have a serial cable it will make your application run even slower since it has to push so much trace data back to the computer.
