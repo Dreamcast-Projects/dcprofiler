@@ -486,7 +486,6 @@ void __cyg_profile_func_enter(void *this, void *callsite) {
 	char* start = ptr;
 	*ptr++ = '>';
 	ptr += ptr_to_hex(this, ptr);
-	*ptr++ = '-';
 	ptr += ull_to_str(PMCR_Read(1), ptr);
 	buffer_index = ptr - buffer;
 	print_amount = ptr - start;
@@ -504,7 +503,6 @@ void __cyg_profile_func_exit(void *this, void *callsite) {
 	char* start = ptr;
 	*ptr++ = '<';
 	ptr += ptr_to_hex(this, ptr);
-	*ptr++ = '-';
 	ptr += ull_to_str(PMCR_Read(1), ptr);
 	buffer_index = ptr - buffer;
 	print_amount = ptr - start;

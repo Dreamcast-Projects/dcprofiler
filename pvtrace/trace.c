@@ -93,7 +93,7 @@ int main(int argc, char *argv[])
 
     uint32_t base_address = 0x8C000000;
     while (!feof(tracef)) {
-        fscanf(tracef, "%c%x-%llu", &type, &address, &currentCycle);
+        fscanf(tracef, "%c%6x%llu", &type, &address, &currentCycle);
         address = base_address | address;
         calculate_total_profile_time(currentCycle);
 
