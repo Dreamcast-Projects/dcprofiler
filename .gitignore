@@ -3,5 +3,6 @@
 *.jpg
 *.txt
 *.dot
+*.bin
 .DS_Store
 .vscode/

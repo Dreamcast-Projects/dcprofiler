@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
 
     /* Default values if not set */
     if(!traceFilename[0])
-        strcpy(traceFilename, "trace.txt");
+        strcpy(traceFilename, "trace.bin");
     if(!addr2linePath[0])
         strcpy(addr2linePath, "/opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line");
 
@@ -84,21 +84,39 @@ int main(int argc, char *argv[])
     init(progName, addr2linePath, verbose);
     stack_init();
 
-    tracef = fopen(traceFilename, "r");
+    tracef = fopen(traceFilename, "rb");
 
     if (tracef == NULL) {
         printf("Can't open %s\n", traceFilename);
         exit(1);
     }
 
-    uint64_t reference = 0;
+    
     uint32_t base_address = 0x8C000000;
-    while (!feof(tracef)) {
-        fscanf(tracef, "%c%6x%llu", &type, &address, &currentCycle);
-        address = base_address | address;
+    uint8_t address_buffer[3];
+    uint8_t llu_length;
+    int i;
 
+    uint64_t reference = 0;
+    while ((type = fgetc(tracef)) != EOF) { // Should be >, <, or EOF
+        address_buffer[0] = fgetc(tracef);  
+        address_buffer[1] = fgetc(tracef);
+        address_buffer[2] = fgetc(tracef);
+
+        // Build address
+        address = base_address | ((address_buffer[2] << 16) | (address_buffer[1] << 8) | address_buffer[0]);
+
+        currentCycle = 0;
+        llu_length = fgetc(tracef);  // Grab the byte length of the number of cycles
+        for(i = 0; i < llu_length; i++) {
+            int byte = fgetc(tracef);
+            currentCycle |= (uint64_t)byte << (8 * i);
+        }
+
+        // Delta decoding
         currentCycle += reference;
         reference = currentCycle;
+        printf("%c0x%08x-%llu\n", type, address, currentCycle);
 
         calculate_total_profile_time(currentCycle);
 

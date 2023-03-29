@@ -31,7 +31,7 @@ profileser: $(TARGET)
 	sudo /opt/toolchains/dc-utils/dc-tool-ser -c "." -t /dev/cu.usbserial-ABSCDWND -b 115200 -x $(TARGET)
 
 dot: 
-	$(KOS_UTILS)/pvtrace $(TARGET)
+	$(KOS_UTILS)/dctrace $(TARGET)
 
 image: dot
 	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
@@ -51,7 +51,7 @@ lxd: dist
 fly: dist
 	$(FLYCAST) PROF.CDI
 
-dist: inst
+dist: $(target)
 	$(KOS_STRIP) $(TARGET)
 	$(KOS_OBJCOPY) -O binary $(TARGET) prog.bin
 	$(KOS_SCRAMBLE) prog.bin 1ST_READ.BIN

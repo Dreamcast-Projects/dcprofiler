@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <arch/timer.h>
+
+#include <string.h>
 
 #include "profiler.h"
 
@@ -364,59 +367,41 @@ void PMCR_Disable(unsigned char which)
 
 /***************************************  MY CODE  ***************************************/
 
-/* Convert a pointer to a hexadecimal string.  We dont care about buffer[6] and buffer[7]
-   because those are always 8c as in 0x8c000000. */
-static int __attribute__ ((no_instrument_function)) ptr_to_hex(void *ptr, char *buffer) {
-    uintptr_t address = (uintptr_t)ptr & 0xFFFFFFFF;
-    const char hex_digits[] = "0123456789abcdef";
+static int __attribute__ ((no_instrument_function)) ptr_to_binary(void *ptr, unsigned char *buffer) {
+	uint8_t *uint8ptr = (uint8_t*)(&ptr);
+	// 0x8c123456 - Format of address of ptr
+	// we dont care about base address portion 0x8c000000
+	// dctrace rebuild it  (buffer[2] << 16) | (buffer[1] << 8) | buffer[0]
 
-	buffer[5] = hex_digits[address & 0xF];
-	address >>= 4;
-	buffer[4] = hex_digits[address & 0xF];
-	address >>= 4;
-	buffer[3] = hex_digits[address & 0xF];
-	address >>= 4;
-	buffer[2] = hex_digits[address & 0xF];
-	address >>= 4;
-	buffer[1] = hex_digits[address & 0xF];
-	address >>= 4;
-	buffer[0] = hex_digits[address & 0xF];
+	buffer[0] = uint8ptr[0]; // 56
+	buffer[1] = uint8ptr[1]; // 34
+	buffer[2] = uint8ptr[2]; // 12
 
-	/* Assuming 6 hex characters */
-	return 6;
+	return 3;
 }
 
-static unsigned long long startTime = 0;
+static unsigned long long startTime;
 
-/* Convert an unsigned long long to a string and only care about the difference
+/* Convert an unsigned long long to a binary format. We only care about the difference
    from the last timestamp value. Delta Encoding!
 */
-static int __attribute__ ((no_instrument_function)) ull_to_str(unsigned long long value, char *buffer) {
-	int length;
-    char *start = buffer;
+static int __attribute__ ((no_instrument_function)) ull_to_binary(unsigned long long value, unsigned char *buffer) {
+	int i, length = 0;
+	uint8_t *uint8ptr = (uint8_t*)(&value);
 	unsigned long long temp = value;
 
 	value -= startTime;
 	startTime = temp;
+	
+    // Calculates the minimum number of bytes required to store the unsigned long long value value in binary format.
+	length = (sizeof(unsigned long long) * 8 - __builtin_clzll(value) + 7) / 8;
 
-    do {
-        *buffer++ = (value % 10) + '0';
-        value /= 10;
-    } while (value > 0);
-    *buffer = '\0';
-	length = buffer - start;
+	buffer[0] = length; // write the number of bytes to be able to decode the variable length
 
-    /* Reverse the string */
-    char *end = buffer - 1;
-    while (start < end) {
-        char temp = *start;
-        *start = *end;
-        *end = temp;
-        start++;
-        end--;
-    }
+	for (i = 0; i < length; i++)
+		buffer[i+1] = uint8ptr[i];
 
-	return length;
+	return length+1;
 }
 
 void main_constructor(void)
@@ -437,8 +422,8 @@ static FILE *fp = NULL;
 
 #define BUFFER_SIZE (1024 * 8)  /* 8k buffer */
 
-static char *ptr;
-static char buffer[BUFFER_SIZE] = {0};
+static unsigned char *ptr;
+static unsigned char buffer[BUFFER_SIZE] = {0};
 static size_t buffer_index;
 static size_t print_amount;
 
@@ -447,6 +432,10 @@ void initializeProfiling(void) {
 }
 
 void shutdownProfiling(void) {
+	PMCR_Stop(1);
+	// write the rest of the buffer
+	write(fp->_file, buffer, buffer_index);
+
     if(fp != NULL) {
         fclose(fp);
         fp = NULL;
@@ -467,10 +456,11 @@ void stopProfiling() {
 void main_constructor(void) {
 	ptr = buffer;
     buffer_index = 0;
+	startTime = 0;
     
-    fp = fopen("/pc/trace.txt", "w");
+    fp = fopen("/pc/trace.bin", "wb");
     if(fp == NULL) {
-        fprintf(stderr, "Trace.txt file not opened\n");
+        fprintf(stderr, "trace.bin file not opened\n");
         exit(-1);
     }
 
@@ -478,6 +468,10 @@ void main_constructor(void) {
 }
 
 void main_destructor(void) {
+	PMCR_Stop(1);
+	// write the rest of the buffer
+	write(fp->_file, buffer, buffer_index);
+
     if(fp != NULL) {
         fclose(fp);
         fp = NULL;
@@ -487,12 +481,18 @@ void main_destructor(void) {
 void __cyg_profile_func_enter(void *this, void *callsite) {
 	//if(active && initialized)
 
-	char* start = ptr;
-	*ptr++ = '>';
-	ptr += ptr_to_hex(this, ptr);
-	ptr += ull_to_str(PMCR_Read(1), ptr);
+	//uint64_t starttime = PMCR_Read(1);
+
+	unsigned char* start = ptr;
+	*ptr++ = '>' | 0b00000000;
+	ptr += ptr_to_binary(this, ptr);
+	ptr += ull_to_binary(PMCR_Read(1), ptr);
 	buffer_index = ptr - buffer;
 	print_amount = ptr - start;
+
+	// uint64_t endtime = PMCR_Read(1);
+	// printf("Timing in nanoseconds: %llu\n", endtime - starttime);
+	// fflush(stdout);
 
 	if((buffer_index+print_amount) >= BUFFER_SIZE) {
 		write(fp->_file, buffer, buffer_index);
@@ -504,10 +504,10 @@ void __cyg_profile_func_enter(void *this, void *callsite) {
 void __cyg_profile_func_exit(void *this, void *callsite) {
     //if(active && initialized)
 
-	char* start = ptr;
-	*ptr++ = '<';
-	ptr += ptr_to_hex(this, ptr);
-	ptr += ull_to_str(PMCR_Read(1), ptr);
+	unsigned char* start = ptr;
+	*ptr++ = '<' | 0b00000000;
+	ptr += ptr_to_binary(this, ptr);
+	ptr += ull_to_binary(PMCR_Read(1), ptr);
 	buffer_index = ptr - buffer;
 	print_amount = ptr - start;
 

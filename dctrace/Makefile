@@ -9,14 +9,14 @@ CC = gcc
 
 OBJS = trace.o symbols.o stack.o priorityqueue.o
 
-pvtrace: $(OBJS)
+dctrace: $(OBJS)
 	gcc -o $@ $(OBJS)
 
 .c.o:
 	$(CC) $(CFLAGS) -Wall -c $<
 
-install: pvtrace
-	cp pvtrace /usr/local/bin
+install: dctrace
+	cp dctrace /usr/local/bin
 
 clean:
-	rm -f pvtrace *.o
+	rm -f dctrace *.o
