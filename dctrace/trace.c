@@ -116,8 +116,7 @@ int main(int argc, char *argv[])
         // Delta decoding
         currentCycle += reference;
         reference = currentCycle;
-        printf("%c0x%08x-%llu\n", type, address, currentCycle);
-
+        
         calculate_total_profile_time(currentCycle);
 
         if(type == '>') {
