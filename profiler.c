@@ -1,19 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arch/timer.h>
-
-#include <string.h>
-
 #include "profiler.h"
 
-/*
-*  The code show below is by Moop and is in the public domain.  Its a module from the DreamHAL library
-*  which can be found here: https://github.com/sega-dreamcast/dreamhal.  I included it here to make
-*  it easier for the coder using this profiler (Just two files). I stripped away a LOT of very 
-*  informative comments. Really check out his DreamHAL library
-*/
+/*******************************************************************************
+*  Performance Counter (PMCR) Definitions and Functions
+*******************************************************************************/
 
-// unsigned short pmcr_ctrl = PMCR_RUN_COUNTER | (reset_count << PMCR_RESET_COUNTER_SHIFT) | (count_type << PMCR_CLOCK_TYPE_SHIFT) | mode;
+// The performance counter code below is adapted from Moop's DreamHal library, which is in the public domain.
+// The original code can be found at the following link: https://github.com/sega-dreamcast/dreamhal
+// The code has been modified and stripped of some informative comments for brevity and ease of use
+// in this profiler. I highly recommend checking out the original DreamHAL library for complete
+// documentation and further understanding.
+
 
 // These registers are 16 bits only and configure the performance counters
 #define PMCR1_CTRL_REG 0xFF000084
@@ -25,6 +24,7 @@
 
 #define PMCTR2H_REG 0xFF10000C
 #define PMCTR2L_REG 0xFF100010
+
 
 #define PMCR_CLOCK_TYPE 0x0100
 #define PMCR_CLOCK_TYPE_SHIFT 8
@@ -39,7 +39,7 @@
 // No 0x1b-0x20
 #define PMCR_INSTRUCTION_CACHE_FILL_MODE            0x21 // Cycles
 #define PMCR_OPERAND_CACHE_FILL_MODE                0x22 // Cycles
-#define PMCR_ELAPSED_TIME_MODE                      0x23 // Cycles; For 200MHz CPU: 5ns per count in 1 cycle = 1 count mode, or around 417.715ps per count (increments by 12) in CPU/bus ratio mode
+#define PMCR_ELAPSED_TIME_MODE                      0x23 // Cycles; For 200MHz CPU: 5ns per count in 1 cycle = 1 count mode, or around 417.715picoseconds per count (increments by 12) in CPU/bus ratio mode
 #define PMCR_PIPELINE_FREEZE_BY_ICACHE_MISS_MODE    0x24 // Cycles
 #define PMCR_PIPELINE_FREEZE_BY_DCACHE_MISS_MODE    0x25 // Cycles
 // No 0x26
@@ -57,18 +57,6 @@
 #define PMCR_CONTINUE_COUNTER 0
 #define PMCR_RESET_COUNTER 1
 
-void main_constructor(void)
-	__attribute__ ((no_instrument_function, constructor));
-
-void main_destructor(void)
-	__attribute__ ((no_instrument_function, destructor));
-
-void __cyg_profile_func_enter(void *, void *) 
-    __attribute__ ((no_instrument_function));
-
-void __cyg_profile_func_exit(void *, void *)
-    __attribute__ ((no_instrument_function));
-
 // Clear counter and enable
 static inline void PMCR_Init(unsigned char which, unsigned char mode, unsigned char count_type)
     __attribute__((no_instrument_function));
@@ -81,23 +69,18 @@ static inline void PMCR_Enable(unsigned char which, unsigned char mode, unsigned
 static inline void PMCR_Restart(unsigned char which, unsigned char mode, unsigned char count_type)
     __attribute__((no_instrument_function));
 
-// Read a counter
-// 48-bit value needs a 64-bit storage unit
-// Return value of 0xffffffffffff means invalid 'which'
-static inline unsigned long long int PMCR_Read(unsigned char which)
-    __attribute__((no_instrument_function));
-
-// Get a counter's current configuration
-// Return value of 0xffff means invalid 'which'
-static inline unsigned short PMCR_Get_Config(unsigned char which)
-    __attribute__((no_instrument_function));
-
 // Stop counter(s) (without clearing)
 static inline void PMCR_Stop(unsigned char which)
     __attribute__((no_instrument_function));
 
 // Disable counter(s) (without clearing)
 static inline void PMCR_Disable(unsigned char which)
+    __attribute__((no_instrument_function));
+
+static inline unsigned long long int PMCR_Read(unsigned char which)
+    __attribute__((no_instrument_function));
+
+static inline unsigned short PMCR_Get_Config(unsigned char which)
     __attribute__((no_instrument_function));
 
 static unsigned char pmcr_enabled = 0;
@@ -113,9 +96,7 @@ static inline void PMCR_Enable(unsigned char which, unsigned char mode, unsigned
 {
 	// Don't do anything if count_type or reset_count are invalid
 	if((count_type | reset_count) > 1)
-	{
 		return;
-	}
 
 	// Build config from parameters
 	unsigned short pmcr_ctrl = PMCR_RUN_COUNTER | (reset_count << PMCR_RESET_COUNTER_SHIFT) | (count_type << PMCR_CLOCK_TYPE_SHIFT) | mode;
@@ -135,16 +116,6 @@ static inline void PMCR_Restart(unsigned char which, unsigned char mode, unsigne
 	PMCR_Enable(1, mode, count_type, PMCR_RESET_COUNTER);
 }
 
-static inline unsigned long long int PMCR_Read(unsigned char which)
-{
-	return (unsigned long long int)(*((volatile unsigned int*)PMCTR1H_REG) & 0xffff) << 32 | (unsigned long long int)(*((volatile unsigned int*)PMCTR1L_REG));
-}
-
-static inline unsigned short PMCR_Get_Config(unsigned char which)
-{
-	return *(volatile unsigned short*)PMCR1_CTRL_REG;
-}
-
 static inline void PMCR_Stop(unsigned char which)
 {
 	// counter 1
@@ -161,7 +132,32 @@ static inline void PMCR_Disable(unsigned char which)
 	pmcr_enabled &= 0x2;
 }
 
-/***************************************  MY CODE  ***************************************/
+static inline unsigned long long int PMCR_Read(unsigned char which)
+{
+	return (unsigned long long int)(*((volatile unsigned int*)PMCTR1H_REG) & 0xffff) << 32 | (unsigned long long int)(*((volatile unsigned int*)PMCTR1L_REG));
+}
+
+static inline unsigned short PMCR_Get_Config(unsigned char which)
+{
+	return *(volatile unsigned short*)PMCR1_CTRL_REG;
+}
+
+/*******************************************************************************
+*  Profiler Code
+*******************************************************************************/
+
+static int active = 0;
+static int initialized = 0;
+static FILE *fp = NULL;
+
+#define BUFFER_SIZE (1024 * 8)  /* 8k buffer */
+
+static unsigned char *ptr;
+static unsigned char buffer[BUFFER_SIZE] __attribute__((aligned(32)));
+static size_t buffer_index;
+static size_t print_amount;
+
+static unsigned long long startTime;
 
 static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *address, unsigned char *buffer) {
 	uint8_t *uint8ptr = (uint8_t*)(&address);
@@ -175,8 +171,6 @@ static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *a
 
 	return 3;
 }
-
-static unsigned long long startTime;
 
 // Convert an unsigned long long to a binary format. We only care about the difference
 // from the last timestamp value. Delta Encoding!
@@ -199,22 +193,14 @@ static inline int __attribute__ ((no_instrument_function)) ull_to_binary(unsigne
 	return length+1;
 }
 
-static int active = 0;
-static int initialized = 0;
-static FILE *fp = NULL;
+uint64_t timer_ns_gettime64() {
+	uint16_t cycles = PMCR_Read(1);
 
-#define BUFFER_SIZE (1024 * 8)  /* 8k buffer */
-
-static unsigned char *ptr;
-static unsigned char buffer[BUFFER_SIZE] = {0};
-static size_t buffer_index;
-static size_t print_amount;
-
-void initializeProfiling(void) {
-    initialized = 1;
+	// 5ns per count in 1 cycle = 1 count mode[PMCR_COUNT_CPU_CYCLES]
+	return cycles * 5;
 }
 
-void shutdownProfiling(void) {
+void shutdown_profiling(void) {
 	PMCR_Stop(1);
 	// Write the rest of the buffer
 	write(fp->_file, buffer, buffer_index);
@@ -228,41 +214,9 @@ void shutdownProfiling(void) {
     active = 0;
 }
 
-void startProfiling() {
-    active = 1;
-}
-
-void stopProfiling() {
-    active = 0;
-}
-
-void main_constructor(void) {
-	ptr = buffer;
-    buffer_index = 0;
-	startTime = 0;
-    
-    fp = fopen("/pc/trace.bin", "wb");
-    if(fp == NULL) {
-        fprintf(stderr, "trace.bin file not opened\n");
-        exit(-1);
-    }
-
-    PMCR_Init(1, PMCR_ELAPSED_TIME_MODE, PMCR_COUNT_CPU_CYCLES);
-}
-
-void main_destructor(void) {
-	PMCR_Stop(1);
-	// Write the rest of the buffer
-	write(fp->_file, buffer, buffer_index);
-
-    if(fp != NULL) {
-        fclose(fp);
-        fp = NULL;
-    }
-}
-
-void __cyg_profile_func_enter(void *this, void *callsite) {
-	//if(active && initialized)
+void __attribute__ ((no_instrument_function)) __cyg_profile_func_enter(void *this, void *callsite) {
+	//if(!active || !initialized)
+	// return;
 
 	//uint64_t starttime = PMCR_Read(1);
 
@@ -280,12 +234,13 @@ void __cyg_profile_func_enter(void *this, void *callsite) {
 	}
 
 	// uint64_t endtime = PMCR_Read(1);
-	// printf("Timing in nanoseconds: %llu\n", endtime - starttime);
+	// printf("Timing in cycles: %llu\n", endtime - starttime);
 	// fflush(stdout);
 }
 
-void __cyg_profile_func_exit(void *this, void *callsite) {
-    //if(active && initialized)
+void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this, void *callsite) {
+    //if(!active || !initialized)
+	// return;
 
 	unsigned char* start = ptr;
 	*ptr++ = '<' | 0b00000000;
@@ -301,3 +256,28 @@ void __cyg_profile_func_exit(void *this, void *callsite) {
 	}
 }
 
+void __attribute__ ((no_instrument_function, constructor)) main_constructor(void) {
+	ptr = buffer;
+    buffer_index = 0;
+	startTime = 0;
+    
+    fp = fopen("/pc/trace.bin", "wb");
+    if(fp == NULL) {
+        fprintf(stderr, "trace.bin file not opened\n");
+        exit(-1);
+    }
+
+    PMCR_Init(1, PMCR_ELAPSED_TIME_MODE, PMCR_COUNT_CPU_CYCLES);
+}
+
+void __attribute__ ((no_instrument_function, destructor)) main_destructor(void) {
+	PMCR_Stop(1);
+
+	// Write whatever is left in the buffer
+	write(fp->_file, buffer, buffer_index);
+
+    if(fp != NULL) {
+        fclose(fp);
+        fp = NULL;
+    }
+}

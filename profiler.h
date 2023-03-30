@@ -5,13 +5,9 @@
 extern "C" {
 #endif
 
-void initializeProfiling() __attribute__((no_instrument_function));
+uint64_t timer_ns_gettime64() __attribute__((no_instrument_function));
 
-void shutdownProfiling() __attribute__((no_instrument_function));
-
-void startProfiling() __attribute__((no_instrument_function));
-
-void stopProfiling() __attribute__((no_instrument_function));
+void shutdown_profiling() __attribute__((no_instrument_function));
 
 #ifdef __cplusplus
 }
