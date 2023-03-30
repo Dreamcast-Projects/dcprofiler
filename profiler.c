@@ -36,7 +36,6 @@
 
 #define PMCR_DISABLE_COUNTER 0x0000
 
-
 // No 0x1b-0x20
 #define PMCR_INSTRUCTION_CACHE_FILL_MODE            0x21 // Cycles
 #define PMCR_OPERAND_CACHE_FILL_MODE                0x22 // Cycles
@@ -57,6 +56,18 @@
 // a counter to 0 or to continue from where it left off
 #define PMCR_CONTINUE_COUNTER 0
 #define PMCR_RESET_COUNTER 1
+
+void main_constructor(void)
+	__attribute__ ((no_instrument_function, constructor));
+
+void main_destructor(void)
+	__attribute__ ((no_instrument_function, destructor));
+
+void __cyg_profile_func_enter(void *, void *) 
+    __attribute__ ((no_instrument_function));
+
+void __cyg_profile_func_exit(void *, void *)
+    __attribute__ ((no_instrument_function));
 
 // Clear counter and enable
 static inline void PMCR_Init(unsigned char which, unsigned char mode, unsigned char count_type)
@@ -93,8 +104,8 @@ static unsigned char pmcr_enabled = 0;
 
 static inline void PMCR_Init(unsigned char which, unsigned char mode, unsigned char count_type) // Will do nothing if perfcounter is already running!
 {
-		// counter 1
-		PMCR_Enable(1, mode, count_type, PMCR_RESET_COUNTER);
+	// counter 1
+	PMCR_Enable(1, mode, count_type, PMCR_RESET_COUNTER);
 }
 
 // Enable "undocumented" performance counters (well, they were undocumented at one point. They're documented now!)
@@ -109,62 +120,51 @@ static inline void PMCR_Enable(unsigned char which, unsigned char mode, unsigned
 	// Build config from parameters
 	unsigned short pmcr_ctrl = PMCR_RUN_COUNTER | (reset_count << PMCR_RESET_COUNTER_SHIFT) | (count_type << PMCR_CLOCK_TYPE_SHIFT) | mode;
 
-	
-		// counter 1
-		*((volatile unsigned short*)PMCR1_CTRL_REG) = pmcr_ctrl;
+	// counter 1
+	*((volatile unsigned short*)PMCR1_CTRL_REG) = pmcr_ctrl;
 
-		pmcr_enabled += 1;
-	
+	pmcr_enabled += 1;
 }
 
 // Reset counter to 0 and start it again
 // NOTE: It does not appear to be possible to clear a counter while it is running.
 static inline void PMCR_Restart(unsigned char which, unsigned char mode, unsigned char count_type)
 {
-	
- 		// counter 1
-		PMCR_Stop(1);
-		PMCR_Enable(1, mode, count_type, PMCR_RESET_COUNTER);
- 	
+	// counter 1
+	PMCR_Stop(1);
+	PMCR_Enable(1, mode, count_type, PMCR_RESET_COUNTER);
 }
 
 static inline unsigned long long int PMCR_Read(unsigned char which)
 {
-	
- 		return (unsigned long long int)(*((volatile unsigned int*)PMCTR1H_REG) & 0xffff) << 32 | (unsigned long long int)(*((volatile unsigned int*)PMCTR1L_REG));
-		
+	return (unsigned long long int)(*((volatile unsigned int*)PMCTR1H_REG) & 0xffff) << 32 | (unsigned long long int)(*((volatile unsigned int*)PMCTR1L_REG));
 }
 
 static inline unsigned short PMCR_Get_Config(unsigned char which)
 {
-	
-		return *(volatile unsigned short*)PMCR1_CTRL_REG;
-	
+	return *(volatile unsigned short*)PMCR1_CTRL_REG;
 }
 
 static inline void PMCR_Stop(unsigned char which)
 {
+	// counter 1
+	*((volatile unsigned short*)PMCR1_CTRL_REG) = PMCR_STOP_COUNTER;
 
-		// counter 1
-		*((volatile unsigned short*)PMCR1_CTRL_REG) = PMCR_STOP_COUNTER;
-
-		pmcr_enabled &= 0x2;
-	
+	pmcr_enabled &= 0x2;
 }
 
 static inline void PMCR_Disable(unsigned char which)
 {
-		// counter 1
-		*((volatile unsigned short*)PMCR1_CTRL_REG) = PMCR_DISABLE_COUNTER;
+	// counter 1
+	*((volatile unsigned short*)PMCR1_CTRL_REG) = PMCR_DISABLE_COUNTER;
 
-		pmcr_enabled &= 0x2;
-	
+	pmcr_enabled &= 0x2;
 }
 
 /***************************************  MY CODE  ***************************************/
 
-static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *ptr, unsigned char *buffer) {
-	uint8_t *uint8ptr = (uint8_t*)(&ptr);
+static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *address, unsigned char *buffer) {
+	uint8_t *uint8ptr = (uint8_t*)(&address);
 	// 0x8c123456 - Format of address of ptr
 	// we dont care about base address portion 0x8c000000
 	// dctrace rebuild it  (buffer[2] << 16) | (buffer[1] << 8) | buffer[0]
@@ -178,39 +178,26 @@ static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *p
 
 static unsigned long long startTime;
 
-/* Convert an unsigned long long to a binary format. We only care about the difference
-   from the last timestamp value. Delta Encoding!
-*/
-static inline int __attribute__ ((no_instrument_function)) ull_to_binary(unsigned long long value, unsigned char *buffer) {
+// Convert an unsigned long long to a binary format. We only care about the difference
+// from the last timestamp value. Delta Encoding!
+static inline int __attribute__ ((no_instrument_function)) ull_to_binary(unsigned long long timestamp, unsigned char *buffer) {
 	int i, length;
-	unsigned long long temp = value;
-	uint8_t *uint8ptr = (uint8_t*)(&value);
+	unsigned long long temp = timestamp;
+	uint8_t *uint8ptr = (uint8_t*)(&timestamp);
 
-	value -= startTime;
+	timestamp -= startTime;
 	startTime = temp;
 	
     // Calculates the minimum number of bytes required to store the unsigned long long value value in binary format.
-	length = (sizeof(unsigned long long) * 8 - __builtin_clzll(value) + 7) / 8;
+	length = (sizeof(unsigned long long) * 8 - __builtin_clzll(timestamp) + 7) / 8;
 
-	buffer[0] = length; // write the number of bytes to be able to decode the variable length
+	buffer[0] = length; // Write the number of bytes to be able to decode the variable length
 
 	for (i = 0; i < length; i++)
 		buffer[i+1] = uint8ptr[i];
 
 	return length+1;
 }
-
-void main_constructor(void)
-	__attribute__ ((no_instrument_function, constructor));
-
-void main_destructor(void)
-	__attribute__ ((no_instrument_function, destructor));
-
-void __cyg_profile_func_enter(void *, void *) 
-    __attribute__ ((no_instrument_function));
-
-void __cyg_profile_func_exit(void *, void *)
-    __attribute__ ((no_instrument_function));
 
 static int active = 0;
 static int initialized = 0;
@@ -229,7 +216,7 @@ void initializeProfiling(void) {
 
 void shutdownProfiling(void) {
 	PMCR_Stop(1);
-	// write the rest of the buffer
+	// Write the rest of the buffer
 	write(fp->_file, buffer, buffer_index);
 
     if(fp != NULL) {
@@ -265,7 +252,7 @@ void main_constructor(void) {
 
 void main_destructor(void) {
 	PMCR_Stop(1);
-	// write the rest of the buffer
+	// Write the rest of the buffer
 	write(fp->_file, buffer, buffer_index);
 
     if(fp != NULL) {
@@ -277,7 +264,7 @@ void main_destructor(void) {
 void __cyg_profile_func_enter(void *this, void *callsite) {
 	//if(active && initialized)
 
-	//uint64_t starttime = PMCR_Read(1);
+	uint64_t starttime = PMCR_Read(1);
 
 	unsigned char* start = ptr;
 	*ptr++ = '>' | 0b00000000;
@@ -292,9 +279,9 @@ void __cyg_profile_func_enter(void *this, void *callsite) {
 		ptr = buffer;
 	}
 
-	// uint64_t endtime = PMCR_Read(1);
-	// printf("Timing in nanoseconds: %llu\n", endtime - starttime);
-	// fflush(stdout);
+	uint64_t endtime = PMCR_Read(1);
+	printf("Timing in nanoseconds: %llu\n", endtime - starttime);
+	fflush(stdout);
 }
 
 void __cyg_profile_func_exit(void *this, void *callsite) {
