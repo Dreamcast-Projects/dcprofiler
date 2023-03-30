@@ -264,7 +264,7 @@ void main_destructor(void) {
 void __cyg_profile_func_enter(void *this, void *callsite) {
 	//if(active && initialized)
 
-	uint64_t starttime = PMCR_Read(1);
+	//uint64_t starttime = PMCR_Read(1);
 
 	unsigned char* start = ptr;
 	*ptr++ = '>' | 0b00000000;
@@ -279,9 +279,9 @@ void __cyg_profile_func_enter(void *this, void *callsite) {
 		ptr = buffer;
 	}
 
-	uint64_t endtime = PMCR_Read(1);
-	printf("Timing in nanoseconds: %llu\n", endtime - starttime);
-	fflush(stdout);
+	// uint64_t endtime = PMCR_Read(1);
+	// printf("Timing in nanoseconds: %llu\n", endtime - starttime);
+	// fflush(stdout);
 }
 
 void __cyg_profile_func_exit(void *this, void *callsite) {
