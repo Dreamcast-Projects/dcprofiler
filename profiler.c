@@ -13,6 +13,8 @@
 *  informative comments. Really check out his DreamHAL library
 */
 
+// unsigned short pmcr_ctrl = PMCR_RUN_COUNTER | (reset_count << PMCR_RESET_COUNTER_SHIFT) | (count_type << PMCR_CLOCK_TYPE_SHIFT) | mode;
+
 // These registers are 16 bits only and configure the performance counters
 #define PMCR1_CTRL_REG 0xFF000084
 #define PMCR2_CTRL_REG 0xFF000088
