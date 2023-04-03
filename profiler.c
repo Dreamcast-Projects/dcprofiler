@@ -4,22 +4,24 @@
 
 #include "profiler.h"
 
-#define LIKELY(exp) __builtin_expect(!!(exp), 1)
-#define UNLIKELY(exp) __builtin_expect(!!(exp), 0)
+#define LIKELY(exp)    __builtin_expect(!!(exp), 1)
+#define UNLIKELY(exp)  __builtin_expect(!!(exp), 0)
 
-#define BUFFER_SIZE (1024 * 8)  /* 8k buffer */
+#define MAX_ENTRY_SIZE 13 // > or < + 3 for address + ~9 for cycle count
+#define MAGIC_NUMBER 71 // (sizeof(uint64_t) * 8 + 7) => 8*8+7
 
-static FILE *fp = NULL;
-static unsigned char *ptr;
-static unsigned char buffer[BUFFER_SIZE] __attribute__((aligned(32)));
+#define BUFFER_SIZE   (1024 * 8)  // 8k buffer
+
+static FILE *fp;
+static uint8_t *ptr;
 static size_t buffer_index;
-static size_t print_amount;
+static uint8_t buffer[BUFFER_SIZE] __attribute__((aligned(32)));
 
-static unsigned long long startTime;
+static uint64_t startTime;
 
 static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *address, unsigned char *buffer) {
 	uint8_t *uint8ptr = (uint8_t*)(&address);
-	// 0x8c123456 - Format of address of ptr
+	// 0x8c 12 34 56 - Format of address of ptr
 	// we dont care about base address portion 0x8c000000
 	// dctrace rebuild it  (buffer[2] << 16) | (buffer[1] << 8) | buffer[0]
 
@@ -30,18 +32,19 @@ static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *a
 	return 3;
 }
 
-// Convert an unsigned long long to a binary format. We only care about the difference
+// Convert an uint64_t to a binary format. We only care about the difference
 // from the last timestamp value. Delta Encoding!
-static inline int __attribute__ ((no_instrument_function)) ull_to_binary(unsigned long long timestamp, unsigned char *buffer) {
+static inline int __attribute__ ((no_instrument_function)) ull_to_binary(uint64_t timestamp, unsigned char *buffer) {
 	int i, length;
-	unsigned long long temp = timestamp;
+	uint64_t temp = timestamp;
 	uint8_t *uint8ptr = (uint8_t*)(&timestamp);
 
 	timestamp -= startTime;
 	startTime = temp;
 	
-    // Calculates the minimum number of bytes required to store the unsigned long long value value in binary format.
-	length = (sizeof(unsigned long long) * 8 - __builtin_clzll(timestamp) + 7) / 8;
+    // Calculates the minimum number of bytes required to store the uint64_t value value in binary format.
+	// (sizeof(uint64_t) * 8 - __builtin_clzll(timestamp) + 7) / 8;
+	length = (MAGIC_NUMBER - __builtin_clzll(timestamp)) >> 3;
 
 	buffer[0] = length; // Write the number of bytes to be able to decode the variable length
 
@@ -69,18 +72,16 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_enter(void *thi
 
 	uint64_t start_time = perf_cntr_count(0);
 
-	unsigned char* start = ptr;
 	*ptr++ = '>' | 0b00000000;
 	ptr += ptr_to_binary(this, ptr);
 	ptr += ull_to_binary(start_time, ptr);
 	buffer_index = ptr - buffer;
-	print_amount = ptr - start;
 
-	// uint64_t end_time = perf_cntr_count(0);
-	// printf("Timing in cycles: %llu\n", end_time - start_time);
-	// fflush(stdout);
+	uint64_t end_time = perf_cntr_count(0);
+	printf("Timing in cycles: %llu\n", end_time - start_time);
+	fflush(stdout);
 
-	if(UNLIKELY((buffer_index+print_amount) >= BUFFER_SIZE)) {
+	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
@@ -93,14 +94,12 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this
 
 	uint64_t end_time = perf_cntr_count(0);
 
-	unsigned char* start = ptr;
 	*ptr++ = '<' | 0b00000000;
 	ptr += ptr_to_binary(this, ptr);
 	ptr += ull_to_binary(end_time, ptr);
 	buffer_index = ptr - buffer;
-	print_amount = ptr - start;
 
-	if(UNLIKELY((buffer_index+print_amount) >= BUFFER_SIZE)) {
+	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
@@ -113,9 +112,8 @@ void __attribute__ ((no_instrument_function, constructor)) main_constructor(void
 	startTime = 0;
     
     fp = fopen("/pc/trace.bin", "wb");
-    if(fp == NULL) {
+    if(fp == NULL)
         fprintf(stderr, "trace.bin file not opened\n");
-    }
 }
 
 void __attribute__ ((no_instrument_function, destructor)) main_destructor(void) {
