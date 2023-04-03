@@ -8,16 +8,16 @@
 #define UNLIKELY(exp)  __builtin_expect(!!(exp), 0)
 
 #define MAX_ENTRY_SIZE 13 // > or < + 3 for address + ~9 for cycle count
-#define MAGIC_NUMBER 71 // (sizeof(uint64_t) * 8 + 7) => 8*8+7
+#define MAGIC_NUMBER   71 // (sizeof(uint64_t) * 8 + 7) => 8*8+7 => 71
 
-#define BUFFER_SIZE   (1024 * 8)  // 8k buffer
+#define BUFFER_SIZE    (1024 * 8)  // 8k buffer
+
+static uint64_t last_time;
 
 static FILE *fp;
 static uint8_t *ptr;
 static size_t buffer_index;
 static uint8_t buffer[BUFFER_SIZE] __attribute__((aligned(32)));
-
-static uint64_t startTime;
 
 static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *address, unsigned char *buffer) {
 	uint8_t *uint8ptr = (uint8_t*)(&address);
@@ -39,8 +39,8 @@ static inline int __attribute__ ((no_instrument_function)) ull_to_binary(uint64_
 	uint64_t temp = timestamp;
 	uint8_t *uint8ptr = (uint8_t*)(&timestamp);
 
-	timestamp -= startTime;
-	startTime = temp;
+	timestamp -= last_time;
+	last_time = temp;
 	
     // Calculates the minimum number of bytes required to store the uint64_t value value in binary format.
 	// (sizeof(uint64_t) * 8 - __builtin_clzll(timestamp) + 7) / 8;
@@ -55,8 +55,6 @@ static inline int __attribute__ ((no_instrument_function)) ull_to_binary(uint64_
 }
 
 void shutdown_profiling(void) {
-
-	// Write the rest of the buffer
 	if(buffer_index > 0)
 		write(fp->_file, buffer, buffer_index);
 
@@ -70,10 +68,16 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_enter(void *thi
 	if(UNLIKELY(fp == NULL))
 		return;
 
-	*ptr++ = '>' | 0b00000000;
+	//uint64_t start_time = perf_cntr_count(0);
+
+	*ptr++ = 0b00111110; // '>'
 	ptr += ptr_to_binary(this, ptr);
 	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
+
+	// uint64_t end_time = perf_cntr_count(0);
+	// printf("Timing in cycles: %llu\n", end_time - start_time);
+	// fflush(stdout);
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
 		write(fp->_file, buffer, buffer_index);
@@ -86,7 +90,7 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this
 	if(UNLIKELY(fp == NULL))
 		return;
 
-	*ptr++ = '<' | 0b00000000;
+	*ptr++ = 0b00111100; //'<'
 	ptr += ptr_to_binary(this, ptr);
 	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
@@ -101,7 +105,7 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this
 void __attribute__ ((no_instrument_function, constructor)) main_constructor(void) {
 	ptr = buffer;
     buffer_index = 0;
-	startTime = 0;
+	last_time = 0;
     
     fp = fopen("/pc/trace.bin", "wb");
     if(fp == NULL)
@@ -109,8 +113,6 @@ void __attribute__ ((no_instrument_function, constructor)) main_constructor(void
 }
 
 void __attribute__ ((no_instrument_function, destructor)) main_destructor(void) {
-
-	// Write whatever is left in the buffer
 	if(buffer_index > 0)
 		write(fp->_file, buffer, buffer_index);
 
