@@ -70,16 +70,10 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_enter(void *thi
 	if(UNLIKELY(fp == NULL))
 		return;
 
-	uint64_t start_time = perf_cntr_count(0);
-
 	*ptr++ = '>' | 0b00000000;
 	ptr += ptr_to_binary(this, ptr);
-	ptr += ull_to_binary(start_time, ptr);
+	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
-
-	uint64_t end_time = perf_cntr_count(0);
-	printf("Timing in cycles: %llu\n", end_time - start_time);
-	fflush(stdout);
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
 		write(fp->_file, buffer, buffer_index);
@@ -92,11 +86,9 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this
 	if(UNLIKELY(fp == NULL))
 		return;
 
-	uint64_t end_time = perf_cntr_count(0);
-
 	*ptr++ = '<' | 0b00000000;
 	ptr += ptr_to_binary(this, ptr);
-	ptr += ull_to_binary(end_time, ptr);
+	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
