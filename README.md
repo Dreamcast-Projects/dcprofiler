@@ -1,7 +1,5 @@
 # dcprofiler
 
-This project utilizes Moops DreamHAL perfcounter source code to count cycles.  So major credit to Moop.  Checkout DreamHal here: https://github.com/sega-dreamcast/dreamhal.
-
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
 2. The application(dctrace) that parses the data (trace.txt) your dreamcast application generates.  This application is based on 
@@ -53,4 +51,4 @@ Then after I run the application using ```make profileip``` and exiting the appl
 
 ## WARNING: 
 
-If the application is already has a low framerate(~15) chances are you are going to get a black screen when using this.  Trace data is still generated though so you can see what is consuming most of the time. This is project is mostly useful if you have a BBA. If you only have a serial cable it will make your application run even slower since it has to push so much trace data back to the computer.
+This profiler generates a ton of tracing data and works with dcload-ser but using it with dcload-ip is preferred.
