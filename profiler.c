@@ -4,10 +4,34 @@
 
 #include "profiler.h"
 
+/*
+ * Compression Algorithm Summary:
+ * 
+ * This algorithm is designed to output compressed binary entries to a 'trace.bin' file,
+ * leveraging the -finstrument-functions functionality of GCC for function
+ * instrumentation.
+ *
+ * Each entry in the output file has the following format:
+ *   1. A '<' or '>' character indicating whether the function was entered or exited.
+ *   2. A 3-byte address representing the function's address in memory.
+ *   3. A 1-byte length field specifying the number of following bytes.
+ *   4. The following bytes, representing the delta-encoded cycle timestamp of
+ *      entering or leaving the function.
+ *
+ * The main purpose of this algorithm is to reduce the overhead of function
+ * instrumentation and to provide a compact representation of function call traces,
+ * allowing for efficient storage and processing of the collected data using 'dctrace'.
+ *
+ * Delta compression is used for the cycle timestamps to further reduce the size
+ * of the output file. This compression method encodes timestamps as the difference
+ * between the current timestamp and the previous one, resulting in smaller values
+ * that often require fewer bytes to represent.
+ */
+
 #define LIKELY(exp)    __builtin_expect(!!(exp), 1)
 #define UNLIKELY(exp)  __builtin_expect(!!(exp), 0)
 
-#define MAX_ENTRY_SIZE 13 // > or < + 3 for address + ~9 for cycle count
+#define MAX_ENTRY_SIZE 13 // > or < + 3 for address + ~9 max for cycle count
 #define MAGIC_NUMBER   71 // (sizeof(uint64_t) * 8 + 7) => 8*8+7 => 71
 
 #define BUFFER_SIZE    (1024 * 8)  // 8k buffer
@@ -48,7 +72,7 @@ static inline int __attribute__ ((no_instrument_function)) ull_to_binary(uint64_
 
 	buffer[0] = length; // Write the number of bytes to be able to decode the variable length
 
-	for (i = 0; i < length; i++)
+	for (i = 0; LIKELY(i < length); i++)
 		buffer[i+1] = uint8ptr[i];
 
 	return length+1;
