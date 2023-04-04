@@ -1,6 +1,6 @@
 # dcprofiler
 
-This project harnesses the capabilities of GCC's instrument functions to profile Dreamcast applications effectively. The instrument functions are automatically inserted at the beginning and end of every function, sending profiling data to your PC for analysis. The desktop application, dctrace, processes this data to generate a .dot file, which provides a visual representation of the call graph for all functions in your application. This detailed call graph includes the number of times each function was called and the percentage of time spent executing each function, offering valuable insights into your application's performance.
+This project harnesses the capabilities of GCC's instrument functions to profile Dreamcast applications. The instrument functions are automatically inserted at the beginning and end of every function, sending profiling data to your PC. The desktop application, dctrace, processes this data to generate a .dot file, which provides a visual representation of the call graph for all functions in your application. This detailed graph includes the number of times each function was called and the percentage of time spent executing each function, offering valuable insights into your application's performance.
 
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
