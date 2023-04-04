@@ -2,7 +2,7 @@
 
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
-2. The application(dctrace) that parses the data (trace.txt) your dreamcast application generates.  This application is based on 
+2. The application(dctrace) that parses the data (trace.bin) your dreamcast application generates.  This application is based on 
 the project [HERE](https://web.archive.org/web/20130528172555/http://www.ibm.com/developerworks/library/l-graphvis/) but I added a counters so you can see how much time is spent in each function.
 
 ## Instructions:
