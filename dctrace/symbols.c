@@ -346,7 +346,7 @@ void write_table(FILE *fp) {
     fprintf(fp, "</TABLE>>];\n");
 }
 
-void write_graph_caption(FILE *fp) {
+void write_graph_caption(FILE *fp, unsigned long long int profileTotalCycles) {
     time_t rawtime;
     struct tm *ltm;
 
@@ -364,6 +364,7 @@ void write_graph_caption(FILE *fp) {
         strcpy(am_pm, "AM");
         if (hour == 0) hour = 12;
     }
+    double secs = (profileTotalCycles*5)/1000000000.0;
 
     /* Print a caption */
     char header[250];
@@ -371,8 +372,8 @@ void write_graph_caption(FILE *fp) {
         "\tgraph [\n"
         "\t\tfontname = \"Helvetica-Oblique\",\n"
         "\t\tfontsize = 32,\n"
-        "\t\tlabel = \"\\n\\n%s\\n%d/%d/%d @ %d:%02d %s\"\n"
-        "\t];", progName, ltm->tm_mon+1, ltm->tm_mday, ltm->tm_year+1900, hour, ltm->tm_min, am_pm);
+        "\t\tlabel = \"\\n\\n%s\\nRuntime: %lf secs\\n%d/%d/%d @ %d:%02d %s\"\n"
+        "\t];", progName, secs, ltm->tm_mon+1, ltm->tm_mday, ltm->tm_year+1900, hour, ltm->tm_min, am_pm);
 
     fprintf(fp, "\n%s", header);
 }
@@ -409,7 +410,7 @@ void create_dot_file(void) {
     write_table(fp);
     fprintf(fp, "\t}\n\n");
 
-    write_graph_caption(fp);
+    write_graph_caption(fp, profileTotalCycles);
 
     fprintf(fp, "\n}\n");
     fclose(fp);
