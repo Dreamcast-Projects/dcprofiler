@@ -104,13 +104,13 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
 	// fflush(stdout);
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
-		uint64_t start_time = perf_cntr_count(0);
+		// uint64_t start_time = perf_cntr_count(0);
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
-		uint64_t end_time = perf_cntr_count(0);
-		printf("Timing in cycles: %llu\n", end_time - start_time);
-		fflush(stdout);
+		// uint64_t end_time = perf_cntr_count(0);
+		// printf("Timing in cycles: %llu\n", end_time - start_time);
+		// fflush(stdout);
 	}
 }
 
@@ -124,13 +124,13 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void 
 	buffer_index = ptr - buffer;
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
-		uint64_t start_time = perf_cntr_count(0);
+		//uint64_t start_time = perf_cntr_count(0);
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
-		uint64_t end_time = perf_cntr_count(0);
-		printf("Timing in cycles: %llu\n", end_time - start_time);
-		fflush(stdout);
+		// uint64_t end_time = perf_cntr_count(0);
+		// printf("Timing in cycles: %llu\n", end_time - start_time);
+		// fflush(stdout);
 	}
 }
 
