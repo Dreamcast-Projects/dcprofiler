@@ -4,7 +4,7 @@ This project harnesses the capabilities of GCC's instrument functions to profile
 
 There is two parts to this project:  
 1. The files you include in your project (profiler.c, profiler.h)
-2. The application(dctrace) that parses the data (trace.bin) your Freamcast application generates.  This application is based on 
+2. The application(dctrace) that parses the data (trace.bin) your Dreamcast application generates.  This application is based on 
 the project [HERE](https://web.archive.org/web/20130528172555/http://www.ibm.com/developerworks/library/l-graphvis/) but with added counters to show the time spent in each function.
 
 ## Instructions:
