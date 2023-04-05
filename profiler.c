@@ -43,7 +43,7 @@ static uint8_t *ptr;
 static size_t buffer_index;
 static uint8_t buffer[BUFFER_SIZE] __attribute__((aligned(32)));
 
-static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *address, unsigned char *buffer) {
+static inline int __attribute__ ((no_instrument_function, hot)) ptr_to_binary(void *address, unsigned char *buffer) {
 	uint8_t *uint8ptr = (uint8_t*)(&address);
 	// 0x8c 12 34 56 - Format of address of ptr
 	// we dont care about base address portion 0x8c000000
@@ -58,7 +58,7 @@ static inline int __attribute__ ((no_instrument_function)) ptr_to_binary(void *a
 
 // Convert an uint64_t to a binary format. We only care about the difference
 // from the last timestamp value. Delta Encoding!
-static inline int __attribute__ ((no_instrument_function)) ull_to_binary(uint64_t timestamp, unsigned char *buffer) {
+static inline int __attribute__ ((no_instrument_function, hot)) ull_to_binary(uint64_t timestamp, unsigned char *buffer) {
 	int i, length;
 	uint64_t temp = timestamp;
 	uint8_t *uint8ptr = (uint8_t*)(&timestamp);
@@ -88,7 +88,7 @@ void shutdown_profiling(void) {
     }
 }
 
-void __attribute__ ((no_instrument_function)) __cyg_profile_func_enter(void *this, void *callsite) {
+void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {
 	if(UNLIKELY(fp == NULL))
 		return;
 
@@ -104,13 +104,17 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_enter(void *thi
 	// fflush(stdout);
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
+		uint64_t start_time = perf_cntr_count(0);
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
+		uint64_t end_time = perf_cntr_count(0);
+		printf("Timing in cycles: %llu\n", end_time - start_time);
+		fflush(stdout);
 	}
 }
 
-void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this, void *callsite) {
+void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void *this, void *callsite) {
 	if(UNLIKELY(fp == NULL))
 		return;
 
@@ -120,9 +124,13 @@ void __attribute__ ((no_instrument_function)) __cyg_profile_func_exit(void *this
 	buffer_index = ptr - buffer;
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
+		uint64_t start_time = perf_cntr_count(0);
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
+		uint64_t end_time = perf_cntr_count(0);
+		printf("Timing in cycles: %llu\n", end_time - start_time);
+		fflush(stdout);
 	}
 }
 

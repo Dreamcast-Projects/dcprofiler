@@ -15,7 +15,7 @@
 #define MAX_FUNCTION_NAME	50
 
 /* Sets/Clears the function list and function matrix and other stuff */
-void init(char *name, const char *path, int verb);  
+void init(char *name, const char *path, int verb, double percent);  
 
 /* Pass in the function address (e.g. 0x8c01053c) to get its index 
 *  in the function list.

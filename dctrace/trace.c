@@ -18,7 +18,8 @@
 #include "symbols.h"
 
 void usage(void);
-#define AVAILABLE_OPTIONS  ":t:a:vh"
+void print_progress_bar(int progress, int bar_length);
+#define AVAILABLE_OPTIONS  ":t:a:p:vh"
 
 int main(int argc, char *argv[])
 {
@@ -28,8 +29,14 @@ int main(int argc, char *argv[])
     unsigned long long int currentCycle;
     unsigned long long int startCycle;
 
+    double bytesRead = 0;
+    int progress = -1;
+    unsigned long long int fileSize;
+    
+
     /* Customize commandline args */
     int verbose = 0;
+    double percentage = 0;
     char progName[256] = {0};
     char traceFilename[256] = {0};
     char addr2linePath[256] = {0};
@@ -48,6 +55,16 @@ int main(int argc, char *argv[])
             break;
         case 'a':
             strncpy(addr2linePath, optarg, strlen(optarg));
+            break;
+        case 'p':
+            if (sscanf (optarg, "%lf", &percentage) != 1) {
+                fprintf(stderr, "Percentage needs a double value between 0-100.\n");
+            }
+            if(percentage < 0)
+                percentage = 0;
+            if(percentage > 100)
+                percentage = 100;
+
             break;
         case 'v':
             verbose = 1;
@@ -81,7 +98,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    init(progName, addr2linePath, verbose);
+    init(progName, addr2linePath, verbose, percentage);
     stack_init();
 
     tracef = fopen(traceFilename, "rb");
@@ -91,6 +108,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    fseek(tracef, 0, SEEK_END); // seek to end of file
+    fileSize = ftell(tracef); // get current file pointer
+    fseek(tracef, 0, SEEK_SET); // seek back to beginning of file
     
     uint32_t base_address = 0x8C000000;
     uint8_t address_buffer[3];
@@ -111,6 +131,14 @@ int main(int argc, char *argv[])
         for(i = 0; i < llu_length; i++) {
             int byte = fgetc(tracef);
             currentCycle |= (uint64_t)byte << (8 * i);
+        }
+
+        bytesRead += 5 + llu_length;
+
+        if(progress != (int)((bytesRead/fileSize)*100))
+        {
+            progress = (int)((bytesRead/fileSize)*100);
+            print_progress_bar(progress, 50);
         }
 
         // Delta decoding
@@ -151,9 +179,32 @@ void usage(void) {
     printf("Usage: pvtrace [OPTIONS] <program.elf>\n");
     printf("Requires: A trace.txt, sh-elf-addr2line \n\n");
     printf("OPTIONS:\n");
-    printf("-t <filename> Set trace file to <filename> (default: trace.txt)\n");
-    printf("-a <filepath> Set sh-elf-addr2line filepath to <filepath>\n");
-    printf("              default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)\n");
-    printf("-v            Verbose\n");
-    printf("-h            Usage information (you\'re looking at it)\n\n");
+    printf("-t <filename>   Set trace file to <filename> (default: trace.txt)\n");
+    printf("-a <filepath>   Set sh-elf-addr2line filepath to <filepath>\n");
+    printf("-p <percentage> Set percentage threshold. Every function under this threshold\n");
+    printf("                will not show up in the dot file (default: 0; 0-100 range)\n");
+    printf("                default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)\n");
+    printf("-v              Verbose\n");
+    printf("-h              Usage information (you\'re looking at it)\n\n");
+}
+
+void print_progress_bar(int progress, int bar_length) {
+    printf("\r["); // Move the cursor to the beginning of the line
+
+    int filled_length = (int)((float)progress / 100 * bar_length);
+    for (int i = 0; i < bar_length; ++i) {
+        if (i < filled_length) {
+            printf("#");
+        }
+        else {
+            printf("-");
+        }
+    }
+
+    printf("] %d%%", progress);
+
+    if(progress == 100) 
+        printf("\n");
+
+    fflush(stdout); // Force the output to be written immediately
 }

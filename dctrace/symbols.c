@@ -37,6 +37,7 @@ static func_t  functions[MAX_FUNCTIONS];
 static calls_t calls[MAX_FUNCTIONS][MAX_FUNCTIONS];
 
 static int verbose;
+static double percentage;
 static char progName[50] = {0};
 static char addr2linePath[256] = {0};
 
@@ -45,10 +46,11 @@ static PriorityQueue pq;
 static unsigned long long int profileStartTime;
 static unsigned long long int profileEndTime;
 
-void init(char *name, const char *path, int verb) {
+void init(char *name, const char *path, int verb, double percent) {
     int from, to;
 
     verbose = verb;
+    percentage = percent;
     strncpy(progName, name, strlen(name));
     strncpy(addr2linePath, path, strlen(path));
 
@@ -233,37 +235,42 @@ void write_node_shapes(FILE *fp, unsigned long long int profileTotalCycles) {
         /* Total cycles spent inside this function and the functions it calls */
         cumulativeCycles = functions[from].totalCycles;
 
-        /* Total cycles spend inside this function MINUS the cycles spent in the 
-           functions it calls
-        */
-        actualCycles = cumulativeCycles - otherFunctionCycles;
+        if(((cumulativeCycles / profileTotalCycles) * 100) >= percentage) {
+            /* Total cycles spend inside this function MINUS the cycles spent in the 
+               functions it calls
+            */
+            actualCycles = cumulativeCycles - otherFunctionCycles;
 
-        /* Add it to the priority queue so we can print a nice table with our graph */
-        pq_insert(&pq, from, (actualCycles / profileTotalCycles) * 100, actualCycles);
+            /* Add it to the priority queue so we can print a nice table with our graph */
+            pq_insert(&pq, from, (actualCycles / profileTotalCycles) * 100, actualCycles);
 
-        /* If recursive, we want the total cumulative amount of cycles spent inside */
-        if(calls[from][from].totalCalls)
-            calls[from][from].totalCycles = cumulativeCycles;
+            /* If recursive, we want the total cumulative amount of cycles spent inside */
+            if(calls[from][from].totalCalls)
+                calls[from][from].totalCycles = cumulativeCycles;
 
-        color_from_percent((cumulativeCycles / profileTotalCycles) * 100, hexColor);
+            color_from_percent((cumulativeCycles / profileTotalCycles) * 100, hexColor);
 
-        fprintf(fp, 
-        "\t\t%s "         /* Function name */
-        "[label=\""
-        "%s\\n"         /* Function name */
-        "%.2f%%\\n"     /* Cumulative Time in function */
-        "(%.2f%%)\\n"   /* Time Inside this function (without considering functions it called) */
-        "%d x\" "       /* Total times called */
-        "fontcolor=\"white\" "
-        "color=\"%s\" "
-        "%s\n",         /* Node shape */
-        functions[from].funcName,
-        functions[from].funcName,
-        (cumulativeCycles / profileTotalCycles) * 100, /* Express as percentage of total runtime */
-        (actualCycles / profileTotalCycles) * 100,     /* Express as percentage of total runtime */
-        functions[from].totalCalls,
-        hexColor,
-        otherFunctionCycles ? "shape=rectangle]" : "shape=ellipse]");
+            fprintf(fp, 
+            "\t\t%s "       /* Function name */
+            "[label=\""
+            "%s\\n"         /* Function name */
+            "%.2f%%\\n"     /* Cumulative Time in function */
+            "(%.2f%%)\\n"   /* Time Inside this function (without considering functions it called) */
+            "%d x\" "       /* Total times called */
+            "fontcolor=\"white\" "
+            "color=\"%s\" "
+            "%s\n",         /* Node shape */
+            functions[from].funcName,
+            functions[from].funcName,
+            (cumulativeCycles / profileTotalCycles) * 100, /* Express as percentage of total runtime */
+            (actualCycles / profileTotalCycles) * 100,     /* Express as percentage of total runtime */
+            functions[from].totalCalls,
+            hexColor,
+            otherFunctionCycles ? "shape=rectangle]" : "shape=ellipse]");
+        }
+        else if(verbose) {
+            printf("Removed %s %f%%\n", functions[from].funcName, ((cumulativeCycles / profileTotalCycles) * 100));
+        }
     }
 
     fprintf(fp, "\n");
@@ -282,35 +289,37 @@ void write_call_graph(FILE *fp, unsigned long long int profileTotalCycles) {
             if (calls[from][to].totalCalls) {
                 temp = ((double)calls[from][to].totalCycles / profileTotalCycles) * 100;
 
-                color_from_percent(temp, hexColor);
+                if(temp >= percentage) {
+                    color_from_percent(temp, hexColor);
 
-                if(from != to) {
-                    fprintf(fp, 
-                        "\t\t%s -> %s [label=\"  "  /* A() => B() */
-                        "%0.2f%%\\n"              /* Percentage of time B() spent in parent function A() */
-                        " %d x\" "
-                        "color=\"%s\" "
-                        "style=\"%s\" "
-                        "fontsize=\"10\"]\n", 
-                        functions[from].funcName, 
-                        functions[to].funcName,
-                        temp,
-                        calls[from][to].totalCalls,
-                        hexColor,
-                        temp > 0.35 ? "bold" : "solid");
-                }
-                else {
-                    fprintf(fp, 
-                        "\t\t%s -> %s [label=\"  "  /* A() => A() */
-                        " %d x\" "
-                        "color=\"%s\" "
-                        "style=\"%s\" "
-                        "fontsize=\"10\"]\n", 
-                        functions[from].funcName, 
-                        functions[to].funcName,
-                        calls[from][to].totalCalls,
-                        hexColor,
-                        temp > 0.35 ? "bold" : "solid");
+                    if(from != to) {
+                        fprintf(fp, 
+                            "\t\t%s -> %s [label=\"  "  /* A() => B() */
+                            "%0.2f%%\\n"              /* Percentage of time B() spent in parent function A() */
+                            " %d x\" "
+                            "color=\"%s\" "
+                            "style=\"%s\" "
+                            "fontsize=\"10\"]\n", 
+                            functions[from].funcName, 
+                            functions[to].funcName,
+                            temp,
+                            calls[from][to].totalCalls,
+                            hexColor,
+                            temp > 0.35 ? "bold" : "solid");
+                    }
+                    else {
+                        fprintf(fp, 
+                            "\t\t%s -> %s [label=\"  "  /* A() => A() */
+                            " %d x\" "
+                            "color=\"%s\" "
+                            "style=\"%s\" "
+                            "fontsize=\"10\"]\n", 
+                            functions[from].funcName, 
+                            functions[to].funcName,
+                            calls[from][to].totalCalls,
+                            hexColor,
+                            temp > 0.35 ? "bold" : "solid");
+                    }
                 }
             }
 
