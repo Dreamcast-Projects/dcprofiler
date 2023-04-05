@@ -181,9 +181,9 @@ void usage(void) {
     printf("OPTIONS:\n");
     printf("-t <filename>   Set trace file to <filename> (default: trace.txt)\n");
     printf("-a <filepath>   Set sh-elf-addr2line filepath to <filepath>\n");
+    printf("                default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)\n");
     printf("-p <percentage> Set percentage threshold. Every function under this threshold\n");
     printf("                will not show up in the dot file (default: 0; 0-100 range)\n");
-    printf("                default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)\n");
     printf("-v              Verbose\n");
     printf("-h              Usage information (you\'re looking at it)\n\n");
 }
