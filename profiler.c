@@ -31,7 +31,7 @@
 #define LIKELY(exp)    __builtin_expect(!!(exp), 1)
 #define UNLIKELY(exp)  __builtin_expect(!!(exp), 0)
 
-#define MAX_ENTRY_SIZE 13 // > or < + 3 for address + ~9 max for cycle count
+#define MAX_ENTRY_SIZE 13 // > or < + 3 for address + length byte + 8 max for cycle count
 #define MAGIC_NUMBER   71 // (sizeof(uint64_t) * 8 + 7) => 8*8+7 => 71
 
 #define BUFFER_SIZE    (1024 * 8)  // 8k buffer
@@ -92,25 +92,15 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
 	if(UNLIKELY(fp == NULL))
 		return;
 
-	//uint64_t start_time = perf_cntr_count(0);
-
 	*ptr++ = 0b00111110; // '>'
 	ptr += ptr_to_binary(this, ptr);
 	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
 
-	// uint64_t end_time = perf_cntr_count(0);
-	// printf("Timing in cycles: %llu\n", end_time - start_time);
-	// fflush(stdout);
-
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
-		// uint64_t start_time = perf_cntr_count(0);
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
-		// uint64_t end_time = perf_cntr_count(0);
-		// printf("Timing in cycles: %llu\n", end_time - start_time);
-		// fflush(stdout);
 	}
 }
 
@@ -124,13 +114,9 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void 
 	buffer_index = ptr - buffer;
 
 	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
-		//uint64_t start_time = perf_cntr_count(0);
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
-		// uint64_t end_time = perf_cntr_count(0);
-		// printf("Timing in cycles: %llu\n", end_time - start_time);
-		// fflush(stdout);
 	}
 }
 

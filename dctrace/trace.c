@@ -108,9 +108,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    fseek(tracef, 0, SEEK_END); // seek to end of file
-    fileSize = ftell(tracef); // get current file pointer
-    fseek(tracef, 0, SEEK_SET); // seek back to beginning of file
+    fseek(tracef, 0, SEEK_END);
+    fileSize = ftell(tracef);
+    fseek(tracef, 0, SEEK_SET);
     
     uint32_t base_address = 0x8C000000;
     uint8_t address_buffer[3];
@@ -181,7 +181,7 @@ void usage(void) {
     printf("OPTIONS:\n");
     printf("-t <filename>   Set trace file to <filename> (default: trace.txt)\n");
     printf("-a <filepath>   Set sh-elf-addr2line filepath to <filepath>\n");
-    printf("                default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)\n");
+    printf("                (default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)\n");
     printf("-p <percentage> Set percentage threshold. Every function under this threshold\n");
     printf("                will not show up in the dot file (default: 0; 0-100 range)\n");
     printf("-v              Verbose\n");
@@ -189,7 +189,7 @@ void usage(void) {
 }
 
 void print_progress_bar(int progress, int bar_length) {
-    printf("\r["); // Move the cursor to the beginning of the line
+    printf("\r[");
 
     int filled_length = (int)((float)progress / 100 * bar_length);
     for (int i = 0; i < bar_length; ++i) {
@@ -206,5 +206,5 @@ void print_progress_bar(int progress, int bar_length) {
     if(progress == 100) 
         printf("\n");
 
-    fflush(stdout); // Force the output to be written immediately
+    fflush(stdout);
 }
