@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <arch/timer.h>
 
-#include "profiler.h"
-
 /*
  * Compression Algorithm Summary:
  * 
@@ -76,16 +74,6 @@ static inline int __attribute__ ((no_instrument_function, hot)) ull_to_binary(ui
 		buffer[i+1] = uint8ptr[i];
 
 	return length+1;
-}
-
-void shutdown_profiling(void) {
-	if(buffer_index > 0)
-		write(fp->_file, buffer, buffer_index);
-
-    if(fp != NULL) {
-        fclose(fp);
-        fp = NULL;
-    }
 }
 
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {

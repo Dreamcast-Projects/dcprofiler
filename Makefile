@@ -65,14 +65,3 @@ dist: $(target)
 	rm -rf ISO
 	rm $(TARGET)
 
-dist2:
-	mkdir -p ISO
-	cp 1ST_READ.BIN ISO
-	mkisofs -C 0,11702 -V DCTEST -G ${KOS_BASE}/IP.BIN -J -R -l -o PROF.ISO ISO
-	$(CREATE_CDI) PROF.ISO PROF.CDI
-	rm -f PROF.ISO
-	rm -f prog.BIN
-	rm -f 1ST_READ.BIN
-	rm -rf ISO
-	rm $(TARGET)
-

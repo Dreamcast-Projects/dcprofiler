@@ -3,16 +3,16 @@
 This project harnesses the capabilities of GCC's instrument functions to profile Dreamcast applications. The instrument functions are automatically inserted at the beginning and end of every function, sending profiling data to your PC. The desktop application, dctrace, processes this data to generate a .dot file, which provides a visual representation of the call graph for all functions in your application. This detailed graph includes the number of times each function was called and the percentage of time spent executing each function, offering valuable insights into your application's performance.
 
 There is two parts to this project:  
-1. The files you include in your project (profiler.c, profiler.h)
+1. The file you include in your project (profiler.c)
 2. The application(dctrace) that parses the data (trace.bin) your Dreamcast application generates.  This application is based on 
 the project [HERE](https://web.archive.org/web/20130528172555/http://www.ibm.com/developerworks/library/l-graphvis/) but with added counters to show the time spent in each function.
 
 ## Instructions:
-1. Add 'profiler.c' and 'profiler.h' to you projects source directory.
+1. Add 'profiler.c' to your projects source directory.
 2. Edit your makefile to add '-g -finstrument-functions' to your KOS_CFLAGS and 'profiler.o' to your OBJS.
 3. Use dc-tool-ip to send your elf file to Dreamcast:
    ```sudo /PATH/TO/dc-tool-ip -c "/PATH/TO/PROJECT" -t 192.168.1.137 -x main.elf```
-4. Profiling automatically starts when the application runs, so ensure you call shutdownProfiling() to stop profiling.
+4. Profiling automatically starts when the application runs, and automatically stops when the application exits.
 5. Run dctrace application on your elf with the command:
   ```dctrace main.elf```
 

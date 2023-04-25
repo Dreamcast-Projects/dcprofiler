@@ -33,7 +33,5 @@ int main(int argc, char **argv) {
         test2();
     }
 
-    shutdown_profiling();
-
     return 0;
 }
