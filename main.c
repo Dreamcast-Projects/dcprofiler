@@ -2,7 +2,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "profiler.h"
 
 /* I use this program to test small utility functions. I test
 *  different variations of the same function to find which is 

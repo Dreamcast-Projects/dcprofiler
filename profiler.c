@@ -85,7 +85,7 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
 	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
 
-	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
+	if(UNLIKELY(buffer_index >= BUFFER_SIZE-MAX_ENTRY_SIZE)) {
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
@@ -101,7 +101,7 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void 
 	ptr += ull_to_binary(perf_cntr_count(0), ptr);
 	buffer_index = ptr - buffer;
 
-	if(UNLIKELY((buffer_index+MAX_ENTRY_SIZE) >= BUFFER_SIZE)) {
+	if(UNLIKELY(buffer_index >= BUFFER_SIZE-MAX_ENTRY_SIZE)) {
 		write(fp->_file, buffer, buffer_index);
 		buffer_index = 0;
 		ptr = buffer;
