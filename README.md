@@ -49,7 +49,7 @@ dot:
 image: dot
 	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
 ```
-After running the application using make profileip and exiting, use the command make image to generate graph.dot and graph.jpg files.
+After running the application using ```make profileip``` and exiting, use the command ```make image``` to generate graph.dot and graph.jpg files.
 
 ## WARNING:
 
