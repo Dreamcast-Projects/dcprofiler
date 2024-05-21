@@ -82,7 +82,7 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
 
     *ptr++ = 0b00111110; // '>'
     ptr += ptr_to_binary(this, ptr);
-    ptr += ull_to_binary(perf_cntr_count(0), ptr);
+    ptr += ull_to_binary(timer_ns_gettime64(), ptr);
     buffer_index = ptr - buffer;
 
     if(UNLIKELY(buffer_index >= BUFFER_SIZE-MAX_ENTRY_SIZE)) {
@@ -98,7 +98,7 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void 
 
     *ptr++ = 0b00111100; // '<'
     ptr += ptr_to_binary(this, ptr);
-    ptr += ull_to_binary(perf_cntr_count(0), ptr);
+    ptr += ull_to_binary(timer_ns_gettime64(), ptr);
     buffer_index = ptr - buffer;
 
     if(UNLIKELY(buffer_index >= BUFFER_SIZE-MAX_ENTRY_SIZE)) {
