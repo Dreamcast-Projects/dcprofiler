@@ -37,10 +37,7 @@ image: dot
 	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
 
 run: $(TARGET)
-	$(KOS_SERIAL_LOADER) $(TARGET)
-
-runip: $(TARGET)
-	$(KOS_IP_LOADER) $(TARGET)
+	sudo $(KOS_IP_LOADER) $(TARGET)
 
 rei: dist
 	$(REICAST) PROF.CDI

@@ -85,7 +85,7 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
     ptr += ull_to_binary(timer_ns_gettime64(), ptr);
     buffer_index = ptr - buffer;
 
-    if(UNLIKELY(buffer_index >= BUFFER_SIZE-MAX_ENTRY_SIZE)) {
+    if(UNLIKELY(buffer_index >= BUFFER_SIZE - MAX_ENTRY_SIZE)) {
         write(fp->_file, buffer, buffer_index);
         buffer_index = 0;
         ptr = buffer;
@@ -108,6 +108,16 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void 
     }
 }
 
+void cleanup(void) {
+    if(buffer_index > 0)
+        write(fp->_file, buffer, buffer_index);
+
+    if(fp != NULL) {
+        fclose(fp);
+        fp = NULL;
+    } 
+}
+
 void __attribute__ ((no_instrument_function, constructor)) main_constructor(void) {
     ptr = buffer;
     buffer_index = 0;
@@ -116,14 +126,6 @@ void __attribute__ ((no_instrument_function, constructor)) main_constructor(void
     fp = fopen("/pc/trace.bin", "wb");
     if(fp == NULL)
         fprintf(stderr, "trace.bin file not opened\n");
-}
-
-void __attribute__ ((no_instrument_function, destructor)) main_destructor(void) {
-    if(buffer_index > 0)
-        write(fp->_file, buffer, buffer_index);
-
-    if(fp != NULL) {
-        fclose(fp);
-        fp = NULL;
-    }
+    else
+        atexit(cleanup);
 }
