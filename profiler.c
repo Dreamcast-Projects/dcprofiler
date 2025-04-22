@@ -10,13 +10,12 @@
 /*
  * Dreamcast Function Profiler (via -finstrument-functions)
  *
- * Writes 20-byte binary records to "/pc/trace.bin" on every function entry/exit.
+ * Writes 12-byte binary records to "/pc/trace.bin" on every function entry/exit.
  * Record format (per event):
- *   uint32_t flag_tid;     // Bit 31 = entry/exit, Bits 0–30 = thread ID
- *   uint32_t address;      // Function address
+ *   uint32_t address;      // Bits 31=entry/exit, 30–22=thread ID, 21–0=compressed addr
  *   uint32_t delta_time;   // Time since last event (ns)
- *   uint32_t delta_evt0;   // PRFC0 delta
- *   uint32_t delta_evt1;   // PRFC1 delta
+ *   uint16_t delta_evt0;   // PRFC0 delta
+ *   uint16_t delta_evt1;   // PRFC1 delta
  *
  * Startup:
  *   - Opens "trace.bin" for writing
@@ -39,8 +38,17 @@
 
 #define BUFFER_SIZE    (1024 * 8)
 
-#define ENTRY_FLAG     0x80000000U
-#define EXIT_FLAG      0x00000000U
+#define ENTRY_FLAG     0x80000000
+#define EXIT_FLAG      0x00000000
+
+#define BASE_ADDRESS   0x8C000000
+#define TID_MASK       0x1FF       /* 9 bits */
+#define ADDR_MASK      0x003FFFFF  /* 22 bits (compressed address) */
+
+#define MAKE_ADDRESS(entry, tid, full_addr) \
+     (((entry) ? ENTRY_FLAG : 0) | \
+     (((tid) & TID_MASK) << 22) | \
+     (((((uint32_t)(full_addr)) - BASE_ADDRESS) >> 2) & ADDR_MASK))
 
 static int fd;
 static FILE *fp;
@@ -58,16 +66,15 @@ static thread_local uint64_t tls_last_event0;
 static thread_local uint64_t tls_last_event1;
 
 typedef struct {
-    uint32_t flag_tid;     /* Bit 31 = entry(1)/exit(0), Bits 0–30 = thread ID */
-    uint32_t address;      /* Function address */
+    uint32_t address;      /* Bits: [31]=entry/exit, [30–22]=thread ID, [21–0]=compressed address */
     uint32_t delta_time;   /* Delta nanoseconds */
-    uint32_t delta_evt0;   /* Delta event0 */
-    uint32_t delta_evt1;   /* Delta event1 */
+    uint16_t delta_evt0;   /* Delta event0 */
+    uint16_t delta_evt1;   /* Delta event1 */
 } prof_record_t;
 
 static void __attribute__ ((no_instrument_function)) init_tls(void) {
     kthread_t *th = thd_get_current();
-    tls_thread_id = th->tid & 0x7FFFFFFFU; /* Reserve bit 31 for entry/exit */
+    tls_thread_id = th->tid & TID_MASK; /* Reserve bit 31 for entry/exit */
     tls_buffer_idx = 0;
     tls_last_time = timer_ns_gettime64();
     tls_last_event0 = perf_cntr_count(PRFC0);
@@ -83,13 +90,14 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
     uint64_t now = timer_ns_gettime64();
     uint64_t e0  = perf_cntr_count(PRFC0);
     uint64_t e1  = perf_cntr_count(PRFC1);
+    uint32_t diff_evt0 = (uint32_t)(e0 - tls_last_event0);
+    uint32_t diff_evt1 = (uint32_t)(e1 - tls_last_event1);
 
     prof_record_t *entry = (void *)(tls_buffer + tls_buffer_idx);
-    entry->flag_tid = flag | tls_thread_id;
-    entry->address = (uint32_t)(this);
+    entry->address = MAKE_ADDRESS(flag, tls_thread_id, this);
     entry->delta_time = (uint32_t)(now - tls_last_time);
-    entry->delta_evt0 = (uint32_t)(e0  - tls_last_event0);
-    entry->delta_evt1 = (uint32_t)(e1  - tls_last_event1);
+    entry->delta_evt0 = (diff_evt0 > 0xFFFF) ? 0xFFFF : (uint16_t)diff_evt0;
+    entry->delta_evt1 = (diff_evt1 > 0xFFFF) ? 0xFFFF : (uint16_t)diff_evt1;
 
     /* Advance this thread’s buffer */
     tls_buffer_idx += sizeof(prof_record_t);

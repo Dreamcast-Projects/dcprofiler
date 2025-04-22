@@ -3,12 +3,11 @@
 dctrace.py – Python port of the pvtrace utility and its support modules,
 using prof_record_t entries from trace.bin.
 
-Each binary record in trace.bin is exactly 20 bytes:
-  uint32_t flag_tid;     # bit 31=entry(1)/exit(0), bits 0–30=thread ID
-  uint32_t address;      # low 32 bits of the function’s address
-  uint32_t delta_time;   # nanoseconds since the last recorded event
-  uint32_t delta_evt0;   # delta of perf counter PRFC0
-  uint32_t delta_evt1;   # delta of perf counter PRFC1
+Each binary record in trace.bin is exactly 12 bytes:
+  uint32_t address;      # bits 31=entry/exit, 30–22=thread ID, 21–0=compressed addr
+  uint32_t delta_time;   # nanoseconds since the last event
+  uint16_t delta_evt0;   # delta of PRFC0
+  uint16_t delta_evt1;   # delta of PRFC1
 
 This script:
   - Reads those records
@@ -28,7 +27,10 @@ from collections import defaultdict
 
 # Constants matching the C version
 ENTRY_FLAG      = 0x80000000
-THREAD_MASK     = 0x7FFFFFFF
+TID_MASK        = 0x1FF
+ADDR_MASK       = 0x003FFFFF
+BASE_ADDRESS    = 0x8C000000
+
 DEFAULT_TRACE   = 'trace.bin'
 DEFAULT_ADDR2LINE = os.environ.get('KOS_ADDR2LINE', '/opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line')
 PQ_MAX_SIZE     = 5
@@ -261,16 +263,33 @@ class DotManager:
 # ----------------------------------------------------------------------------
 # main: parse trace.bin and drive analysis
 # ----------------------------------------------------------------------------
+def print_progress_bar(progress, bar_length=50):
+    """
+    Prints a progress bar to the console.
+
+    :param progress: Progress percentage (0–100)
+    :param bar_length: Length of the bar in characters
+    """
+    filled_length = int(bar_length * progress // 100)
+    bar = '#' * filled_length + '-' * (bar_length - filled_length)
+    sys.stdout.write(f'\r[{bar}] {progress}%')
+    sys.stdout.flush()
+
+    if progress == 100:
+        print()
+
 def usage():
-    print("Usage: python3 dctrace [OPTIONS] <program.elf>")
+    print("Usage: python3 dctrace.py [OPTIONS] <program.elf>")
     print("Requires: A trace.bin, sh-elf-addr2line\n")
     print("OPTIONS:")
-    print("  -t <filename>   Set trace file to <filename> (default: trace.bin)")
-    print("  -a <filepath>   Set sh-elf-addr2line filepath to <filepath>")
-    print("                  (default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)")
-    print("  -p <percentage> Set percentage threshold. Every function under this threshold")
-    print("                  will not show up in the dot file (default: 0; 0–100 range)")
-    print("  -v              Verbose")
+    print("  -t <filename>     Set trace file to <filename> (default: trace.bin)")
+    print("  -a <filepath>     Set sh-elf-addr2line filepath to <filepath>")
+    print("                    (default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)")
+    print("  -p <percentage>   Set percentage threshold. Every function under this threshold")
+    print("                    will not show up in the dot file (default: 0; 0–100 range)")
+    print("  -ev0=\"<label>\"  Custom label for ev0 (default: ev0)")
+    print("  -ev1=\"<label>\"  Custom label for ev1 (default: ev1)")
+    print("  -v                Verbose output")
     sys.exit(1)
 
 def parse_args():
@@ -292,15 +311,26 @@ def main():
             current_time = 0
             current_e0 = 0
             current_e1 = 0
-            rec_struct = struct.Struct('<IIIII')
+            rec_struct = struct.Struct('<IIHH')
+
+            total_size = os.path.getsize(args.trace)
+            read_size = 0
 
             while True:
                 data = f.read(rec_struct.size)
                 if not data or len(data) < rec_struct.size:
                     break
 
-                flag_tid, address, delta_time, delta_evt0, delta_evt1 = rec_struct.unpack(data)
-                is_entry = bool(flag_tid & ENTRY_FLAG)
+                read_size += len(data)
+                progress = int((read_size / total_size) * 100)
+                print_progress_bar(progress)
+
+                entry_tid_addr, delta_time, delta_evt0, delta_evt1 = rec_struct.unpack(data)
+                is_entry = bool((entry_tid_addr >> 31) & 1)
+                thread_id = (entry_tid_addr >> 22) & TID_MASK
+                compressed_addr = entry_tid_addr & ADDR_MASK
+                address = (compressed_addr << 2) + BASE_ADDRESS
+
                 current_time += delta_time
                 current_e0 += delta_evt0
                 current_e1 += delta_evt1
@@ -348,10 +378,29 @@ def main():
                         cc.ev0 += delta_e0
                         cc.ev1 += delta_e1
 
-            # flush any remaining stack frames
-            # while call_stack.num_elems():
-            #     addr, start = call_stack.pop()
-            #     sm.end_symbol(addr, reference - start)
+            # Final cleanup for any unmatched function entries
+            if call_stack:
+                if args.verbose:
+                    print(f"Warning: {len(call_stack)} unmatched function entries detected. Processing them as incomplete frames.")
+
+                for i, frame in enumerate(call_stack):
+                    delta_time = current_time - frame.start_time
+                    delta_e0 = current_e0 - frame.start_e0
+                    delta_e1 = current_e1 - frame.start_e1
+
+                    func = functions[frame.addr]
+                    if args.verbose:
+                        print(f"  Function: {func.name} at depth {i}")
+                    func.total_time += delta_time
+                    func.ev0 += delta_e0
+                    func.ev1 += delta_e1
+
+                    if i > 0:
+                        parent = call_stack[i - 1].addr
+                        cc = child_calls[parent][frame.addr]
+                        cc.total_cycles += delta_time
+                        cc.ev0 += delta_e0
+                        cc.ev1 += delta_e1
 
             dm = DotManager(args.program, args.addr2line, args.verbose, args.percentage, current_time, args.ev0_label, args.ev1_label)
             dm.create_dot_file()
