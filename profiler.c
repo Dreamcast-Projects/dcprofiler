@@ -1,131 +1,167 @@
 #include <stdio.h>
 #include <stdlib.h>
+
+#include <kos/thread.h>
+
 #include <arch/timer.h>
 
+#include <dc/perf_monitor.h>
+
 /*
- * Compression Algorithm Summary:
- * 
- * This algorithm is designed to output compressed binary entries to a 'trace.bin' file,
- * leveraging the -finstrument-functions functionality of GCC for function
- * instrumentation.
+ * Dreamcast Function Profiler (via -finstrument-functions)
  *
- * Each entry in the output file has the following format:
- *   1. A '<' or '>' character indicating whether the function was entered or exited.
- *   2. A 3-byte address representing the function's address in memory.
- *   3. A 1-byte length field specifying the number of following bytes.
- *   4. The following bytes, representing the delta-encoded cycle timestamp of
- *      entering or leaving the function.
+ * Writes 20-byte binary records to "/pc/trace.bin" on every function entry/exit.
+ * Record format (per event):
+ *   uint32_t flag_tid;     // Bit 31 = entry/exit, Bits 0–30 = thread ID
+ *   uint32_t address;      // Function address
+ *   uint32_t delta_time;   // Time since last event (ns)
+ *   uint32_t delta_evt0;   // PRFC0 delta
+ *   uint32_t delta_evt1;   // PRFC1 delta
  *
- * The main purpose of this algorithm is to reduce the overhead of function
- * instrumentation and to provide a compact representation of function call traces,
- * allowing for efficient storage and processing of the collected data using 'dctrace'.
+ * Startup:
+ *   - Opens "trace.bin" for writing
+ *   - Registers cleanup with atexit()
+ *   - Starts PRFC0/PRFC1 counters
  *
- * Delta compression is used for the cycle timestamps to further reduce the size
- * of the output file. This compression method encodes timestamps as the difference
- * between the current timestamp and the previous one, resulting in smaller values
- * that often require fewer bytes to represent.
+ * On each instrumented function call:
+ *   - Captures time and counters
+ *   - Computes deltas vs last event
+ *   - Buffers the record in an 8KB TLS buffer (flushed when full)
+ *
+ * Cleanup:
+ *   - Flushes remaining records
+ *   - Stops and clears counters
+ *   - Closes file
  */
 
-#define LIKELY(exp)    __builtin_expect(!!(exp), 1)
-#define UNLIKELY(exp)  __builtin_expect(!!(exp), 0)
+/* Use TLS to keep things separate */ 
+#define thread_local _Thread_local
 
-#define MAX_ENTRY_SIZE 13 // > or < + 3 for address + length byte + 8 max for cycle count
-#define MAGIC_NUMBER   71 // (sizeof(uint64_t) * 8 + 7) => 8*8+7 => 71
+#define BUFFER_SIZE    (1024 * 8)
 
-#define BUFFER_SIZE    (1024 * 8)  // 8k buffer
+#define ENTRY_FLAG     0x80000000U
+#define EXIT_FLAG      0x00000000U
 
-static uint64_t last_time;
-
+static int fd;
 static FILE *fp;
-static uint8_t *ptr;
-static size_t buffer_index;
-static uint8_t buffer[BUFFER_SIZE] __attribute__((aligned(32)));
+static mutex_t io_lock = MUTEX_INITIALIZER;
 
-static inline int __attribute__ ((no_instrument_function, hot)) ptr_to_binary(void *address, unsigned char *buffer) {
-    uint8_t *uint8ptr = (uint8_t*)(&address);
-    // 0x8c 12 34 56 - Format of address of ptr
-    // we dont care about base address portion 0x8c000000
-    // dctrace rebuild it  (buffer[2] << 16) | (buffer[1] << 8) | buffer[0]
+/* TLS buffer management */
+static thread_local size_t  tls_buffer_idx;
+static thread_local uint8_t tls_buffer[BUFFER_SIZE] __attribute__((aligned(32)));
 
-    buffer[0] = uint8ptr[0]; // 56
-    buffer[1] = uint8ptr[1]; // 34
-    buffer[2] = uint8ptr[2]; // 12
+/* TLS stats management */
+static thread_local bool     tls_inited;
+static thread_local uint32_t tls_thread_id;
+static thread_local uint64_t tls_last_time;
+static thread_local uint64_t tls_last_event0;
+static thread_local uint64_t tls_last_event1;
 
-    return 3;
+typedef struct {
+    uint32_t flag_tid;     /* Bit 31 = entry(1)/exit(0), Bits 0–30 = thread ID */
+    uint32_t address;      /* Function address */
+    uint32_t delta_time;   /* Delta nanoseconds */
+    uint32_t delta_evt0;   /* Delta event0 */
+    uint32_t delta_evt1;   /* Delta event1 */
+} prof_record_t;
+
+static void __attribute__ ((no_instrument_function)) init_tls(void) {
+    kthread_t *th = thd_get_current();
+    tls_thread_id = th->tid & 0x7FFFFFFFU; /* Reserve bit 31 for entry/exit */
+    tls_buffer_idx = 0;
+    tls_last_time = timer_ns_gettime64();
+    tls_last_event0 = perf_cntr_count(PRFC0);
+    tls_last_event1 = perf_cntr_count(PRFC1);
+
+    tls_inited = true;
 }
 
-// Convert an uint64_t to a binary format. We only care about the difference
-// from the last timestamp value. Delta Encoding!
-static inline int __attribute__ ((no_instrument_function, hot)) ull_to_binary(uint64_t timestamp, unsigned char *buffer) {
-    int i, length;
-    uint64_t temp = timestamp;
-    uint8_t *uint8ptr = (uint8_t*)(&timestamp);
-
-    timestamp -= last_time;
-    last_time = temp;
+static void __attribute__ ((no_instrument_function, hot)) create_entry(void *this, uint32_t flag) {
+    if(__unlikely(!tls_inited))
+        init_tls();
     
-    // Calculates the minimum number of bytes required to store the uint64_t value value in binary format.
-    // (sizeof(uint64_t) * 8 - __builtin_clzll(timestamp) + 7) / 8;
-    length = (MAGIC_NUMBER - __builtin_clzll(timestamp)) >> 3;
+    uint64_t now = timer_ns_gettime64();
+    uint64_t e0  = perf_cntr_count(PRFC0);
+    uint64_t e1  = perf_cntr_count(PRFC1);
 
-    buffer[0] = length; // Write the number of bytes to be able to decode the variable length
+    prof_record_t *entry = (void *)(tls_buffer + tls_buffer_idx);
+    entry->flag_tid = flag | tls_thread_id;
+    entry->address = (uint32_t)(this);
+    entry->delta_time = (uint32_t)(now - tls_last_time);
+    entry->delta_evt0 = (uint32_t)(e0  - tls_last_event0);
+    entry->delta_evt1 = (uint32_t)(e1  - tls_last_event1);
 
-    for (i = 0; LIKELY(i < length); i++)
-        buffer[i+1] = uint8ptr[i];
+    /* Advance this thread’s buffer */
+    tls_buffer_idx += sizeof(prof_record_t);
 
-    return length+1;
-}
+    /* Update for next delta */
+    tls_last_time = now;
+    tls_last_event0 = e0;
+    tls_last_event1 = e1;
 
-void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {
-    if(UNLIKELY(fp == NULL))
-        return;
+    /* When this thread’s buffer is full, flush under lock */
+    if(__unlikely(tls_buffer_idx >= BUFFER_SIZE - sizeof(prof_record_t))) {
+        mutex_lock(&io_lock);
+        write(fd, tls_buffer, tls_buffer_idx);
+        mutex_unlock(&io_lock);
 
-    *ptr++ = 0b00111110; // '>'
-    ptr += ptr_to_binary(this, ptr);
-    ptr += ull_to_binary(timer_ns_gettime64(), ptr);
-    buffer_index = ptr - buffer;
-
-    if(UNLIKELY(buffer_index >= BUFFER_SIZE - MAX_ENTRY_SIZE)) {
-        write(fp->_file, buffer, buffer_index);
-        buffer_index = 0;
-        ptr = buffer;
+        tls_buffer_idx = 0;
     }
 }
 
-void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void *this, void *callsite) {
-    if(UNLIKELY(fp == NULL))
-        return;
-
-    *ptr++ = 0b00111100; // '<'
-    ptr += ptr_to_binary(this, ptr);
-    ptr += ull_to_binary(timer_ns_gettime64(), ptr);
-    buffer_index = ptr - buffer;
-
-    if(UNLIKELY(buffer_index >= BUFFER_SIZE-MAX_ENTRY_SIZE)) {
-        write(fp->_file, buffer, buffer_index);
-        buffer_index = 0;
-        ptr = buffer;
+static void __attribute__ ((no_instrument_function)) cleanup(void) {
+    if(tls_buffer_idx > 0) {
+        mutex_lock(&io_lock);
+        write(fd, tls_buffer, tls_buffer_idx);
+        mutex_unlock(&io_lock);
     }
-}
+    
+    perf_cntr_stop(PRFC0);
+    perf_cntr_stop(PRFC1);
 
-void cleanup(void) {
-    if(buffer_index > 0)
-        write(fp->_file, buffer, buffer_index);
+    perf_cntr_clear(PRFC0);
+    perf_cntr_clear(PRFC1);
 
     if(fp != NULL) {
         fclose(fp);
         fp = NULL;
-    } 
+    }
+}
+
+void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {
+    (void)callsite;
+
+    if(__unlikely(fp == NULL))
+        return;
+
+    create_entry(this, ENTRY_FLAG);
+}
+
+void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void *this, void *callsite) {
+    (void)callsite;
+
+    if(__unlikely(fp == NULL))
+        return;
+
+    create_entry(this, EXIT_FLAG);
 }
 
 void __attribute__ ((no_instrument_function, constructor)) main_constructor(void) {
-    ptr = buffer;
-    buffer_index = 0;
-    last_time = 0;
-    
     fp = fopen("/pc/trace.bin", "wb");
-    if(fp == NULL)
+    if(fp == NULL) {
         fprintf(stderr, "trace.bin file not opened\n");
-    else
-        atexit(cleanup);
+        return;
+    }
+
+    fd = fileno(fp);
+
+    /* Cleanup at exit */
+    atexit(cleanup);
+
+    /* Start performance counters */
+    perf_cntr_timer_disable();
+    perf_cntr_clear(PRFC0);
+    perf_cntr_clear(PRFC1);
+    perf_cntr_start(PRFC0, PMCR_OPERAND_CACHE_MISS_MODE, PMCR_COUNT_CPU_CYCLES);
+    perf_cntr_start(PRFC1, PMCR_INSTRUCTION_CACHE_MISS_MODE, PMCR_COUNT_CPU_CYCLES);
 }

@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""
+dctrace.py – Python port of the pvtrace utility and its support modules,
+using prof_record_t entries from trace.bin.
+
+Each binary record in trace.bin is exactly 20 bytes:
+  uint32_t flag_tid;     # bit 31=entry(1)/exit(0), bits 0–30=thread ID
+  uint32_t address;      # low 32 bits of the function’s address
+  uint32_t delta_time;   # nanoseconds since the last recorded event
+  uint32_t delta_evt0;   # delta of perf counter PRFC0
+  uint32_t delta_evt1;   # delta of perf counter PRFC1
+
+This script:
+  - Reads those records
+  - Builds symbol tables (addr→function via addr2line)
+  - Tracks call stacks and aggregates call counts & cycles
+  - Outputs a Graphviz dot file (graph.dot) visualizing the call graph
+"""
+import argparse
+import struct
+import subprocess
+import sys
+import time
+import os
+import traceback
+from bisect import insort
+from collections import defaultdict
+
+# Constants matching the C version
+ENTRY_FLAG      = 0x80000000
+THREAD_MASK     = 0x7FFFFFFF
+DEFAULT_TRACE   = 'trace.bin'
+DEFAULT_ADDR2LINE = os.environ.get('KOS_ADDR2LINE', '/opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line')
+PQ_MAX_SIZE     = 5
+
+# --- Data structures ---
+class StackFrame:
+    __slots__ = ('addr','start_time','start_e0','start_e1')
+    def __init__(self, addr, start_time, start_e0, start_e1):
+        self.addr = addr
+        self.start_time = start_time
+        self.start_e0 = start_e0
+        self.start_e1 = start_e1
+
+class FunctionRecord:
+    __slots__ = ('name','total_time','times_called','ev0','ev1')
+    def __init__(self, name):
+        self.name = name
+        self.total_time = 0
+        self.times_called = 0
+        self.ev0 = 0
+        self.ev1 = 0
+
+class ChildCall:
+    __slots__ = ('total_cycles','times_called','ev0','ev1')
+    def __init__(self):
+        self.total_cycles = 0
+        self.times_called = 0
+        self.ev0 = 0
+        self.ev1 = 0
+
+class PriorityQueue:
+    def __init__(self, max_size=PQ_MAX_SIZE):
+        self.max_size = max_size
+        self.elements = []  # list of tuples (-percentage, from_idx, cycles)
+
+    def insert(self, from_idx, percentage, cycles):
+        # If full and new is no better than worst, skip
+        if len(self.elements) == self.max_size and percentage <= -self.elements[-1][0]:
+            return
+        # Insert and keep sorted descending by percentage
+        insort(self.elements, (-percentage, from_idx, cycles))
+        # Trim to max_size
+        if len(self.elements) > self.max_size:
+            self.elements.pop()
+
+    @property
+    def size(self):
+        return len(self.elements)
+
+# --- Global mappings ---
+functions = {}  # addr -> FunctionRecord
+child_calls = defaultdict(lambda: defaultdict(ChildCall))  # parent_addr -> (child_addr -> ChildCall)
+call_stack = []  # list of StackFrame
+
+def addr2name(addr, addr2line, program):
+    try:
+        p = subprocess.Popen([addr2line, '-e', program, '-f', '-s', hex(addr)],
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL)
+        name = p.stdout.readline().strip().decode()
+        return name or hex(addr)
+    except Exception:
+        return hex(addr)
+
+class DotManager:
+    def __init__(self, program, addr2line_path, verbose, threshold, total, ev0, ev1):
+        self.program     = program
+        self.addr2line     = addr2line_path
+        self.verbose       = verbose
+        self.threshold     = threshold
+        self.pq            = PriorityQueue()
+        self.total         = total
+        self.ev0           = ev0
+        self.ev1           = ev1
+
+    def color_from_percent(self, pct):
+        wl = 440 + pct*(220/100)
+        if wl < 490:
+            r, g, b = 0, (wl-440)/(490-440), 1
+        elif wl < 510:
+            r, g, b = 0,1,-(wl-510)/(510-490)
+        elif wl < 580:
+            r, g, b = (wl-510)/(580-510),1,0
+        elif wl < 645:
+            r, g, b = 1, -(wl-645)/(645-580),0
+        else:
+            r, g, b = 1,0,0
+        r,g,b = [int(x*255*0.7) for x in (r,g,b)]
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def format_float_smart(self, val):
+        return f"{val:.0f}" if val == int(val) else f"{val:.2f}"
+
+    def write_node_shapes(self, fp):
+        for addr, fn in functions.items():
+            if fn.times_called == 0:
+                continue
+            cum = fn.total_time
+            # sum cycles spent in children (excluding self-calls)
+            child_cycles = sum(cc.total_cycles
+                               for callee, cc in child_calls.get(addr, {}).items()
+                               if callee != addr)
+            inclusive = cum - child_cycles
+            pct_cum = (cum / self.total) * 100
+            pct_inclusive = (inclusive / self.total) * 100
+            if pct_inclusive < self.threshold:
+                continue
+
+            # insert into priority queue
+            self.pq.insert(addr, pct_inclusive, cum)
+
+            # if recursive, record full cumulative into that child edge
+            if addr in child_calls.get(addr, {}):
+                child_calls[addr][addr].total_cycles = cum
+
+            col   = self.color_from_percent(pct_cum)
+            shape = "rectangle" if child_cycles else "ellipse"
+            label = f"{fn.name}\\n{pct_cum:.2f}%\\n"
+            children = child_calls.get(addr, {})
+
+            # Only include inclusive % line if it's NOT a leaf
+            if child_cycles:
+                label += f"({pct_inclusive:.2f}%)\\n"
+
+            # Avoid division by zero just in case
+            ev0_avg = fn.ev0 / fn.times_called if fn.times_called else 0
+            ev1_avg = fn.ev1 / fn.times_called if fn.times_called else 0
+
+            label += f"{self.ev0}: {self.format_float_smart(ev0_avg)} / call\\n"
+
+            if child_cycles:
+                child_ev0_total = sum(cc.ev0 for callee, cc in children.items() if callee != addr)
+                inclusive_ev0 = fn.ev0 - child_ev0_total
+                inclusive_ev0_avg = inclusive_ev0 / fn.times_called if fn.times_called else 0
+                label += f"({self.ev0}: {self.format_float_smart(inclusive_ev0_avg)} / call)\\n"
+
+            label += f"{self.ev1}: {self.format_float_smart(ev1_avg)} / call\\n"
+
+            if child_cycles:
+                child_ev1_total = sum(cc.ev1 for callee, cc in children.items() if callee != addr)
+                inclusive_ev1 = fn.ev1 - child_ev1_total
+                inclusive_ev1_avg = inclusive_ev1 / fn.times_called if fn.times_called else 0
+                label += f"({self.ev1}: {self.format_float_smart(inclusive_ev1_avg)} / call)\\n"
+
+            label += f"{fn.times_called} x"
+
+            fp.write(
+                f"\t\t\"{fn.name}\" [label=\"{label}\" "
+                f"fontcolor=\"white\" color=\"{col}\" shape={shape}]\n"
+            )
+        fp.write("\n")
+
+    def write_call_graph(self, fp):
+        for caller, callee_dict in child_calls.items():
+            for callee, cc in callee_dict.items():
+                if cc.times_called == 0:
+                    continue
+                pct = (cc.total_cycles / self.total) * 100
+                if pct < self.threshold:
+                    continue
+                col   = self.color_from_percent(pct)
+                style = "bold" if pct > 0.35 else "solid"
+                name_f = functions[caller].name
+                name_t = functions[callee].name
+                label = f"{pct:.2f}%\\n{cc.times_called} x"
+                fp.write(
+                    f"\t\t\"{name_f}\" -> \"{name_t}\" "
+                    f"[label=\"{label}\" color=\"{col}\" style=\"{style}\" fontsize=10]\n"
+                )
+
+    def write_table(self, fp):
+        elements = self.pq.elements
+        last_index = len(elements)
+
+        fp.write("\t\ta0 [shape=none label=<\n\t\t\t<TABLE border=\"0\" cellspacing=\"3\" cellpadding=\"10\" bgcolor=\"black\">\n\t\t\t\t")
+
+        for rank, (neg_pct, idx, cycles) in enumerate(elements, 1):
+            pct = -neg_pct
+            name = functions[idx].name
+            fp.write("<TR>\n\t\t\t\t\t")
+            fp.write(f"<TD bgcolor=\"white\">{rank}</TD>\n\t\t\t\t\t")
+            fp.write(f"<TD bgcolor=\"white\">{name}</TD>\n\t\t\t\t\t")
+            fp.write(f"<TD bgcolor=\"white\">{pct:.2f}%</TD>\n\t\t\t\t\t")
+            fp.write("</TR>")
+
+            if rank != last_index:
+                fp.write("\n\n\t\t\t\t")  # Extra spacing *only* between rows
+
+        fp.write("\n\t\t\t</TABLE>\n\t\t>];\n")
+
+    def write_graph_caption(self, fp):
+        now = time.localtime()
+        ampm = 'PM' if now.tm_hour >= 12 else 'AM'
+        hour = now.tm_hour % 12 or 12
+        secs = (self.total) / 1e9
+        label = (f"{self.program}\n\t\tRuntime: {secs:.3f} secs\n\t\t"
+                 f"{now.tm_mon+1}/{now.tm_mday}/{now.tm_year} @ "
+                 f"{hour}:{now.tm_min:02d} {ampm}")
+
+        fp.write("\n\tgraph [\n"
+                 "\t\tfontname = \"Helvetica-Oblique\",\n"
+                 "\t\tfontsize = 32,\n")
+        fp.write(f"\t\tlabel=\"{label}\"\n\t];")
+
+    def create_dot_file(self):
+        with open('graph.dot', 'w') as fp:
+            fp.write("digraph program {\n\n\t")
+
+            # Write the graph cluster
+            fp.write("subgraph cluster0 {\n\t\t"
+                     "ratio=fill;\n\t\t"
+                     "node [style=filled];\n\t\t"
+                     "peripheries=0;\n\n")
+
+            self.write_node_shapes(fp)
+            self.write_call_graph(fp)
+            fp.write("\t}\n\n\t")
+
+            # Write the table cluster
+            fp.write("subgraph cluster1 {\n\t\t"
+                     "peripheries=0;\n\t\t"
+                     "node [fontname=\"Helvetica,Arial,sans-serif\" fontsize=22]\n\t\t"
+                     "edge [fontname=\"Helvetica,Arial,sans-serif\" fontsize=22]\n\n")
+            self.write_table(fp)
+            fp.write("\t}\n")
+
+            self.write_graph_caption(fp)
+            fp.write("\n}\n")
+
+# ----------------------------------------------------------------------------
+# main: parse trace.bin and drive analysis
+# ----------------------------------------------------------------------------
+def usage():
+    print("Usage: python3 dctrace [OPTIONS] <program.elf>")
+    print("Requires: A trace.bin, sh-elf-addr2line\n")
+    print("OPTIONS:")
+    print("  -t <filename>   Set trace file to <filename> (default: trace.bin)")
+    print("  -a <filepath>   Set sh-elf-addr2line filepath to <filepath>")
+    print("                  (default: /opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line)")
+    print("  -p <percentage> Set percentage threshold. Every function under this threshold")
+    print("                  will not show up in the dot file (default: 0; 0–100 range)")
+    print("  -v              Verbose")
+    sys.exit(1)
+
+def parse_args():
+    p = argparse.ArgumentParser(description="dctrace")
+    p.add_argument('-t', '--trace', default=DEFAULT_TRACE)
+    p.add_argument('-a', '--addr2line', default=DEFAULT_ADDR2LINE)
+    p.add_argument('-p', '--percentage', type=float, default=0)
+    p.add_argument('-v', '--verbose', action='store_true')
+    p.add_argument('-ev0', '--ev0-label', default='ev0', help='Custom label for ev0 (default: ev0)')
+    p.add_argument('-ev1', '--ev1-label', default='ev1', help='Custom label for ev1 (default: ev1)')
+    p.add_argument('program', help='path to ELF executable')
+    return p.parse_args()
+
+def main():
+    args = parse_args()
+
+    try:
+        with open(args.trace, 'rb') as f:
+            current_time = 0
+            current_e0 = 0
+            current_e1 = 0
+            rec_struct = struct.Struct('<IIIII')
+
+            while True:
+                data = f.read(rec_struct.size)
+                if not data or len(data) < rec_struct.size:
+                    break
+
+                flag_tid, address, delta_time, delta_evt0, delta_evt1 = rec_struct.unpack(data)
+                is_entry = bool(flag_tid & ENTRY_FLAG)
+                current_time += delta_time
+                current_e0 += delta_evt0
+                current_e1 += delta_evt1
+
+                if is_entry:
+                    # -- ENTRY logic --
+                    if address not in functions:
+                        func_name = addr2name(address, args.addr2line, args.program)
+                        functions[address] = FunctionRecord(func_name)
+                    func = functions[address]
+                    func.times_called += 1
+
+                    # record child call count
+                    if call_stack:
+                        parent = call_stack[-1].addr
+                        cc = child_calls[parent][address]
+                        cc.times_called += 1
+
+                    # push new frame
+                    frame = StackFrame(address, current_time, current_e0, current_e1)
+                    call_stack.append(frame)
+
+                else:
+                    # -- EXIT logic --
+                    if not call_stack:
+                        # unmatched exit, skip
+                        continue
+
+                    frame = call_stack.pop()
+                    delta_time = current_time - frame.start_time
+                    delta_e0 = current_e0 - frame.start_e0
+                    delta_e1 = current_e1 - frame.start_e1
+
+                    # update function totals
+                    func = functions[frame.addr]
+                    func.total_time += delta_time
+                    func.ev0 += delta_e0
+                    func.ev1 += delta_e1
+
+                    # update child call accumulation
+                    if call_stack:
+                        parent = call_stack[-1].addr
+                        cc = child_calls[parent][frame.addr]
+                        cc.total_cycles += delta_time
+                        cc.ev0 += delta_e0
+                        cc.ev1 += delta_e1
+
+            # flush any remaining stack frames
+            # while call_stack.num_elems():
+            #     addr, start = call_stack.pop()
+            #     sm.end_symbol(addr, reference - start)
+
+            dm = DotManager(args.program, args.addr2line, args.verbose, args.percentage, current_time, args.ev0_label, args.ev1_label)
+            dm.create_dot_file()
+    except FileNotFoundError:
+        print(f"Error: file '{args.infile}' not found.\n\n")
+        usage()
+    except Exception as e:
+        print("An error occurred:")
+        traceback.print_exc()   # prints file, line, and stack trace
+        print("\n\n")
+        usage()
+
+if __name__ == '__main__':
+    main()

@@ -1,6 +1,8 @@
 # What we are building
 TARGET = profile.elf
 
+TRACE_FILE = trace.bin
+
 # List of all source files
 SRCS = main.c profiler.c
 
@@ -30,8 +32,8 @@ profileip: $(TARGET)
 profileser: $(TARGET)
 	sudo /opt/toolchains/dc-utils/dc-tool-ser -c "." -t /dev/cu.usbserial-ABSCDWND -b 115200 -x $(TARGET)
 
-dot: 
-	$(KOS_UTILS)/dctrace $(TARGET)
+dot: $(TRACE_FILE) $(TARGET)
+	python3 dctrace.py $(TARGET)
 
 image: dot
 	dot -Tjpg graph.dot -o graph_$(DATETIME).jpg
