@@ -47,14 +47,16 @@ To generate images from `.dot` files, you'll need to install the **Graphviz** to
 
 The `dctrace.py` script accepts several options to customize the profiling output:
 
-| Option             | Description                                                                                      |
-|--------------------|--------------------------------------------------------------------------------------------------|
-| `-t <filename>`    | Specify an alternate `trace.bin` file. Default is `trace.bin`.                                   |
-| `-a <path>`        | Path to the `sh-elf-addr2line` tool. Default: `/opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line`.  |
-| `-p <percent>`     | Percentage threshold: functions under this inclusive time % are omitted from the graph.          |
-| `-ev0="<custom0>"` | Custom label to display for event counter 0. Default is `ev0`.                                   |
-| `-ev1="<custom1>"` | Custom label to display for event counter 1. Default is `ev1`.                                   |
-| `-v`               | Enable verbose mode for extra debugging info.                                                    |
+| Option              | Description                                                                                         |
+|---------------------|-----------------------------------------------------------------------------------------------------|
+| `-t <filename>`     | Specify the input trace file (default: `trace.bin`).                                                |
+| `-a <path>`         | Path to the `sh-elf-addr2line` tool (default: `/opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line`).    |
+| `-p <percent>`      | Percentage threshold for graph visibility. Functions below this inclusive time % are omitted.       |
+| `-ev0="<label>"`    | Custom label to display for event counter 0 (default: `ev0`).                                       |
+| `-ev1="<label>"`    | Custom label to display for event counter 1 (default: `ev1`).                                       |
+| `--xt <float>`      | Exclude-time threshold. Suggest excluding functions below this % of runtime (alias: `--ex-time`).   |
+| `--xe <float>`      | Exclude-event threshold. Suggest excluding functions below this % of ev0/ev1 (alias: `--ex-ev`).    |
+| `-v`                | Enable verbose output for debugging unmatched functions, parsing info, etc.                         |
 
 ### Example Usage
 
