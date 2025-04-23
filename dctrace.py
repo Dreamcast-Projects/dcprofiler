@@ -412,6 +412,9 @@ def main():
             total_size = os.path.getsize(args.trace)
             read_size = 0
 
+            total_size = os.path.getsize(args.trace)
+            read_size = 0
+
             while True:
                 header = f.read(4)
                 if not header or len(header) < 4:
