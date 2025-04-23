@@ -8,29 +8,43 @@
 #include <dc/perf_monitor.h>
 
 /*
- * Dreamcast Function Profiler (via -finstrument-functions)
+ * Dreamcast Function Profiler – Low-overhead instrumentation for function entry/exit
+ * Works in tandem with GCC’s -finstrument-functions.
  *
- * Writes 12-byte binary records to "/pc/trace.bin" on every function entry/exit.
- * Record format (per event):
- *   uint32_t address;      // Bits 31=entry/exit, 30–22=thread ID, 21–0=compressed addr
- *   uint32_t delta_time;   // Time since last event (ns)
- *   uint16_t delta_evt0;   // PRFC0 delta
- *   uint16_t delta_evt1;   // PRFC1 delta
+ * This profiler:
+ *   ✓ Captures timestamps and performance counters (PRFC0 / PRFC1)
+ *   ✓ Computes deltas since the last call per-thread
+ *   ✓ Compresses data using unsigned LEB128 encoding
+ *   ✓ Divides time deltas by 80 (to match 80ns tick resolution)
+ *   ✓ Writes compact variable-length records to /pc/trace.bin via dcload
  *
- * Startup:
- *   - Opens "trace.bin" for writing
- *   - Registers cleanup with atexit()
- *   - Starts PRFC0/PRFC1 counters
+ * Binary Record Format (per function entry or exit):
+ *   uint32_t address
+ *     - Bit 31: 1 for entry, 0 for exit
+ *     - Bits 30–22: thread ID
+ *     - Bits 21–0: compressed function address (>>2 from 0x8C000000)
  *
- * On each instrumented function call:
- *   - Captures time and counters
- *   - Computes deltas vs last event
- *   - Buffers the record in an 8KB TLS buffer (flushed when full)
+ *   LEB128 encoded values (1–5 bytes each):
+ *     - scaled_time:   delta time / 80ns
+ *     - delta_evt0:    delta of PRFC0 (e.g., operand cache misses)
+ *     - delta_evt1:    delta of PRFC1 (e.g., instruction cache misses)
+ *
+ * Memory & Performance:
+ *   - Each thread maintains its own 8KB TLS buffer, flushed when full
+ *   - All instrumentation functions are marked __no_instrument_function to avoid recursion
+ *   - No dynamic allocations; aligned buffers for safe unaligned writes
+ *
+ * Initialization:
+ *   - File opened at startup via constructor (main_constructor)
+ *   - Counters started and cleared
+ *   - Cleanup handler registered with atexit()
  *
  * Cleanup:
- *   - Flushes remaining records
- *   - Stops and clears counters
- *   - Closes file
+ *   - Flushes remaining buffer contents
+ *   - Stops and clears hardware counters
+ *   - Closes trace file
+ *
+ * Paired with `dctrace.py` to decode, resolve symbols, and generate call graphs.
  */
 
 /* Use TLS to keep things separate */ 
@@ -45,6 +59,8 @@
 #define TID_MASK       0x1FF       /* 9 bits */
 #define ADDR_MASK      0x003FFFFF  /* 22 bits (compressed address) */
 
+#define MAX_ENTRY_SIZE 19
+
 #define MAKE_ADDRESS(entry, tid, full_addr) \
      (((entry) ? ENTRY_FLAG : 0) | \
      (((tid) & TID_MASK) << 22) | \
@@ -55,8 +71,9 @@ static FILE *fp;
 static mutex_t io_lock = MUTEX_INITIALIZER;
 
 /* TLS buffer management */
-static thread_local size_t  tls_buffer_idx;
-static thread_local uint8_t tls_buffer[BUFFER_SIZE] __attribute__((aligned(32)));
+static thread_local uint8_t *tls_ptr;
+static thread_local size_t   tls_buffer_idx;
+static thread_local uint8_t  tls_buffer[BUFFER_SIZE] __attribute__((aligned(32)));
 
 /* TLS stats management */
 static thread_local bool     tls_inited;
@@ -65,17 +82,31 @@ static thread_local uint64_t tls_last_time;
 static thread_local uint64_t tls_last_event0;
 static thread_local uint64_t tls_last_event1;
 
-typedef struct {
-    uint32_t address;      /* Bits: [31]=entry/exit, [30–22]=thread ID, [21–0]=compressed address */
-    uint32_t delta_time;   /* Delta nanoseconds */
-    uint16_t delta_evt0;   /* Delta event0 */
-    uint16_t delta_evt1;   /* Delta event1 */
-} prof_record_t;
+static inline void  __attribute__ ((no_instrument_function)) write_u32_unaligned(uint8_t *dst, uint32_t value) {
+    dst[0] = (uint8_t)(value & 0xFF);
+    dst[1] = (uint8_t)((value >> 8) & 0xFF);
+    dst[2] = (uint8_t)((value >> 16) & 0xFF);
+    dst[3] = (uint8_t)((value >> 24) & 0xFF);
+}
+
+static size_t __attribute__ ((no_instrument_function)) encode_uleb128(uint32_t value, uint8_t *out) {
+    size_t count = 0;
+    do {
+        uint8_t byte = value & 0x7F;
+        value >>= 7;
+        if (value != 0)
+            byte |= 0x80;
+        out[count++] = byte;
+    } while (value != 0);
+
+    return count;
+}
 
 static void __attribute__ ((no_instrument_function)) init_tls(void) {
     kthread_t *th = thd_get_current();
     tls_thread_id = th->tid & TID_MASK; /* Reserve bit 31 for entry/exit */
     tls_buffer_idx = 0;
+    tls_ptr = tls_buffer;
     tls_last_time = timer_ns_gettime64();
     tls_last_event0 = perf_cntr_count(PRFC0);
     tls_last_event1 = perf_cntr_count(PRFC1);
@@ -90,17 +121,24 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
     uint64_t now = timer_ns_gettime64();
     uint64_t e0  = perf_cntr_count(PRFC0);
     uint64_t e1  = perf_cntr_count(PRFC1);
+
     uint32_t diff_evt0 = (uint32_t)(e0 - tls_last_event0);
     uint32_t diff_evt1 = (uint32_t)(e1 - tls_last_event1);
+    uint32_t delta_time = (uint32_t)(now - tls_last_time);
 
-    prof_record_t *entry = (void *)(tls_buffer + tls_buffer_idx);
-    entry->address = MAKE_ADDRESS(flag, tls_thread_id, this);
-    entry->delta_time = (uint32_t)(now - tls_last_time);
-    entry->delta_evt0 = (diff_evt0 > 0xFFFF) ? 0xFFFF : (uint16_t)diff_evt0;
-    entry->delta_evt1 = (diff_evt1 > 0xFFFF) ? 0xFFFF : (uint16_t)diff_evt1;
+    /* Efficient divide by 80 */
+    uint32_t scaled_time = ((uint64_t)delta_time * 0xCCCCCCCDULL) >> 38;
+
+    /* Write record byte by byte */
+    uint32_t addr = MAKE_ADDRESS(flag, tls_thread_id, this);
+    write_u32_unaligned(tls_ptr, addr);
+    tls_ptr += 4;
+    tls_ptr += encode_uleb128(scaled_time, tls_ptr);
+    tls_ptr += encode_uleb128(diff_evt0, tls_ptr);
+    tls_ptr += encode_uleb128(diff_evt1, tls_ptr);
 
     /* Advance this thread’s buffer */
-    tls_buffer_idx += sizeof(prof_record_t);
+    tls_buffer_idx = tls_ptr - tls_buffer;
 
     /* Update for next delta */
     tls_last_time = now;
@@ -108,11 +146,11 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
     tls_last_event1 = e1;
 
     /* When this thread’s buffer is full, flush under lock */
-    if(__unlikely(tls_buffer_idx >= BUFFER_SIZE - sizeof(prof_record_t))) {
+    if(__unlikely(tls_buffer_idx >= BUFFER_SIZE - MAX_ENTRY_SIZE)) {
         mutex_lock(&io_lock);
         write(fd, tls_buffer, tls_buffer_idx);
         mutex_unlock(&io_lock);
-
+        tls_ptr = tls_buffer;
         tls_buffer_idx = 0;
     }
 }
