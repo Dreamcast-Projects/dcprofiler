@@ -1,20 +1,39 @@
 #!/usr/bin/env python3
 """
-dctrace.py – Python port of the pvtrace utility and its support modules,
-using prof_record_t entries from trace.bin.
+dctrace.py – Python utility for decoding compressed Dreamcast profiler output,
+and generating a visual call graph with detailed performance stats.
 
-Each binary record in trace.bin is exactly 20 bytes:
-  uint32_t flag_tid;     # bit 31=entry(1)/exit(0), bits 0–30=thread ID
-  uint32_t address;      # low 32 bits of the function’s address
-  uint32_t delta_time;   # nanoseconds since the last recorded event
-  uint32_t delta_evt0;   # delta of perf counter PRFC0
-  uint32_t delta_evt1;   # delta of perf counter PRFC1
+This script works in conjunction with a Dreamcast profiler that:
+  - Uses -finstrument-functions to log function entry/exit
+  - Delta-encodes performance counter and timestamp values
+  - Writes records in a compact binary format (trace.bin)
 
-This script:
-  - Reads those records
-  - Builds symbol tables (addr→function via addr2line)
-  - Tracks call stacks and aggregates call counts & cycles
-  - Outputs a Graphviz dot file (graph.dot) visualizing the call graph
+Each record is variable-length (typically 9–19 bytes), consisting of:
+  - uint32_t address:
+      - Bits 31     = 1 for entry, 0 for exit
+      - Bits 30–22  = thread ID
+      - Bits 21–0   = compressed function address (>>2 from 0x8C000000)
+  - LEB128 encoded:
+      - uint32_t scaled_time (delta time / 80ns)
+      - uint32_t delta_evt0 (e.g. operand cache misses)
+      - uint32_t delta_evt1 (e.g. instruction cache misses)
+
+This script performs:
+  ✓ LEB128 decoding of all deltas
+  ✓ Symbol resolution using addr2line
+  ✓ Accurate wall-clock runtime reconstruction
+  ✓ Call graph reconstruction and self/inclusive time breakdown
+  ✓ Parent → child contribution tracking
+  ✓ Low-impact function detection and Makefile CFLAGS suggestions
+  ✓ DOT file generation for Graphviz
+
+Output:
+  - graph.dot: a visual call graph (render using `dot -Tpng graph.dot -o graph.png`)
+  - Console: list of functions you may wish to exclude from profiling for smaller traces
+
+Example usage:
+    python3 dctrace.py -t trace.bin -p 2 myprogram.elf
+    dot -Tsvg graph.dot -o graph.svg
 """
 import argparse
 import struct
@@ -28,7 +47,10 @@ from collections import defaultdict
 
 # Constants matching the C version
 ENTRY_FLAG      = 0x80000000
-THREAD_MASK     = 0x7FFFFFFF
+TID_MASK        = 0x1FF
+ADDR_MASK       = 0x003FFFFF
+BASE_ADDRESS    = 0x8C000000
+
 DEFAULT_TRACE   = 'trace.bin'
 DEFAULT_ADDR2LINE = os.environ.get('KOS_ADDR2LINE', '/opt/toolchains/dc/sh-elf/bin/sh-elf-addr2line')
 PQ_MAX_SIZE     = 5
@@ -82,16 +104,6 @@ class PriorityQueue:
 functions = {}  # addr -> FunctionRecord
 child_calls = defaultdict(lambda: defaultdict(ChildCall))  # parent_addr -> (child_addr -> ChildCall)
 call_stack = []  # list of StackFrame
-
-def addr2name(addr, addr2line, program):
-    try:
-        p = subprocess.Popen([addr2line, '-e', program, '-f', '-s', hex(addr)],
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL)
-        name = p.stdout.readline().strip().decode()
-        return name or hex(addr)
-    except Exception:
-        return hex(addr)
 
 class DotManager:
     def __init__(self, program, addr2line_path, verbose, threshold, total, ev0, ev1):
@@ -261,6 +273,16 @@ class DotManager:
 # ----------------------------------------------------------------------------
 # main: parse trace.bin and drive analysis
 # ----------------------------------------------------------------------------
+def addr2name(addr, addr2line, program):
+    try:
+        p = subprocess.Popen([addr2line, '-e', program, '-f', '-s', hex(addr)],
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL)
+        name = p.stdout.readline().strip().decode()
+        return name or hex(addr)
+    except Exception:
+        return hex(addr)
+
 def print_progress_bar(progress, bar_length=50):
     """
     Prints a progress bar to the console.
@@ -287,6 +309,10 @@ def usage():
     print("                    will not show up in the dot file (default: 0; 0–100 range)")
     print("  -ev0=\"<label>\"  Custom label for ev0 (default: ev0)")
     print("  -ev1=\"<label>\"  Custom label for ev1 (default: ev1)")
+    print("  --xt <float>      Suggest exclude for functions below this % of runtime")
+    print("                         (alias: --ex-time, default: 3.0)")
+    print("  --xe <float>      Suggest exclude for functions using less than this % of")
+    print("                         ev0 and ev1 (alias: --ex-ev, default: 1.0)")
     print("  -v                Verbose output")
     sys.exit(1)
 
@@ -298,8 +324,81 @@ def parse_args():
     p.add_argument('-v', '--verbose', action='store_true')
     p.add_argument('-ev0', '--ev0-label', default='ev0', help='Custom label for ev0 (default: ev0)')
     p.add_argument('-ev1', '--ev1-label', default='ev1', help='Custom label for ev1 (default: ev1)')
+    p.add_argument('--xt', '--ex-time', dest='exclude_time_threshold', type=float, default=3.0,
+               help='Suggest exclude for functions below this % of runtime (default: 3.0)')
+    p.add_argument('--xe', '--ex-ev', dest='exclude_ev_threshold', type=float, default=1.0,
+               help='Suggest exclude for functions below this % of ev0/ev1 usage (default: 1.0)')
     p.add_argument('program', help='path to ELF executable')
     return p.parse_args()
+
+def suggest_exclude_functions(total_time, total_ev0, total_ev1, percent_threshold, ev_percent_threshold):
+    """
+    Suggests low-impact functions to exclude from instrumentation.
+
+    Criteria for exclusion:
+    - Inclusive time < `percent_threshold` (% of total runtime).
+    - Inclusive ev0 and ev1 < `ev_percent_threshold` (% of total ev0/ev1 counts).
+    - Called at least once (times_called > 0).
+
+    This version includes functions with children, as long as the total impact remains small.
+    That way, even small utility functions that call other tiny helpers can be excluded.
+
+    This helps reduce trace size and overhead on the Dreamcast.
+    """
+    candidates = []
+
+    for addr, fn in functions.items():
+        if fn.times_called == 0:
+            continue
+
+        name = fn.name
+        inclusive_time_pct = (fn.total_time / total_time) * 100 if total_time else 0
+        ev0_pct = (fn.ev0 / total_ev0) * 100 if total_ev0 else 0
+        ev1_pct = (fn.ev1 / total_ev1) * 100 if total_ev1 else 0
+
+        if (
+            inclusive_time_pct < percent_threshold and
+            ev0_pct < ev_percent_threshold and
+            ev1_pct < ev_percent_threshold
+        ):
+            candidates.append((inclusive_time_pct, name))
+
+    if not candidates:
+        return
+
+    candidates.sort()
+    exclude_names = [name for _, name in candidates]
+    total_pct = sum(p for p, _ in candidates)
+
+    print("\n Suggested low-impact functions to exclude from instrumentation:")
+    print(f"    (Collectively account for {total_pct:.2f}% of total runtime)\n")
+    
+    # Multiline Makefile-friendly format
+    print("EXCLUDE_FUNCS = \\")
+    for name in exclude_names:
+        print(f"    {name} \\")
+
+    print("CFLAGS += -finstrument-functions-exclude-function-list=$(EXCLUDE_FUNCS)\n")
+    print("  NOTE: Be sure your CFLAGS appear *before* kos-cc or kos-c++ in your Makefile command:")
+    print("    Example:")
+    print("    $(TARGET): $(OBJS)")
+    print("        kos-cc $(CFLAGS) -o $(TARGET)\n")
+
+def read_uleb128(f):
+    result = 0
+    shift = 0
+    count = 0
+    while True:
+        byte = f.read(1)
+        if not byte:
+            raise EOFError("Unexpected EOF while reading ULEB128")
+        b = byte[0]
+        result |= (b & 0x7F) << shift
+        count += 1
+        if not (b & 0x80):
+            break
+        shift += 7
+    return result, count
 
 def main():
     args = parse_args()
@@ -309,23 +408,40 @@ def main():
             current_time = 0
             current_e0 = 0
             current_e1 = 0
-            rec_struct = struct.Struct('<IIIII')
+
+            total_size = os.path.getsize(args.trace)
+            read_size = 0
 
             total_size = os.path.getsize(args.trace)
             read_size = 0
 
             while True:
-                data = f.read(rec_struct.size)
-                if not data or len(data) < rec_struct.size:
+                header = f.read(4)
+                if not header or len(header) < 4:
                     break
 
-                read_size += len(data)
+                entry_tid_addr = struct.unpack('<I', header)[0]
+                read_size += 4
+
+                try:
+                    delta_time, t_bytes = read_uleb128(f)
+                    delta_evt0, e0_bytes = read_uleb128(f)
+                    delta_evt1, e1_bytes = read_uleb128(f)
+                    read_size += t_bytes + e0_bytes + e1_bytes
+                except EOFError:
+                    if args.verbose:
+                        print("Incomplete record at end of file; skipping.")
+                    break
+
                 progress = int((read_size / total_size) * 100)
                 print_progress_bar(progress)
 
-                flag_tid, address, delta_time, delta_evt0, delta_evt1 = rec_struct.unpack(data)
-                is_entry = bool(flag_tid & ENTRY_FLAG)
-                current_time += delta_time
+                is_entry = bool((entry_tid_addr >> 31) & 1)
+                thread_id = (entry_tid_addr >> 22) & TID_MASK
+                compressed_addr = entry_tid_addr & ADDR_MASK
+                address = (compressed_addr << 2) + BASE_ADDRESS
+
+                current_time += delta_time * 80
                 current_e0 += delta_evt0
                 current_e1 += delta_evt1
 
@@ -366,8 +482,8 @@ def main():
 
                     # update child call accumulation
                     if call_stack:
-                        parent = call_stack[-1].addr
-                        cc = child_calls[parent][frame.addr]
+                        parent = call_stack[-1]
+                        cc = child_calls[parent.addr][frame.addr]
                         cc.total_cycles += delta_time
                         cc.ev0 += delta_e0
                         cc.ev1 += delta_e1
@@ -395,6 +511,9 @@ def main():
                         cc.total_cycles += delta_time
                         cc.ev0 += delta_e0
                         cc.ev1 += delta_e1
+
+            # Suggest some functions the user can remove from intrumenstation after the first run
+            suggest_exclude_functions(current_time, current_e0, current_e1, args.exclude_time_threshold, args.exclude_ev_threshold)
 
             dm = DotManager(args.program, args.addr2line, args.verbose, args.percentage, current_time, args.ev0_label, args.ev1_label)
             dm.create_dot_file()
