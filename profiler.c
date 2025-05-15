@@ -2,7 +2,7 @@
 #include <stdlib.h>
 
 #include <kos/thread.h>
-
+#include <kos/mutex.h>
 #include <arch/timer.h>
 
 #include <dc/perf_monitor.h>
