@@ -176,11 +176,10 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
     if(__predict_false(tls_buffer_idx >= BUFFER_SIZE - MAX_ENTRY_SIZE)) {
         if(profiler_lock_io() == 0) {
             write(fd, tls_buffer, tls_buffer_idx);
+            tls_ptr = tls_buffer;
+            tls_buffer_idx = 0;
             profiler_unlock_io();
         }
-
-        tls_ptr = tls_buffer;
-        tls_buffer_idx = 0;
     }
 }
 
