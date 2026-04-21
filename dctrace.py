@@ -21,7 +21,7 @@ Each record is variable-length (typically 9–19 bytes), consisting of:
 This script performs:
   ✓ LEB128 decoding of all deltas
   ✓ Symbol resolution using addr2line
-  ✓ Accurate wall-clock runtime reconstruction
+  ✓ Per-thread trace-time reconstruction
   ✓ Call graph reconstruction and self/inclusive time breakdown
   ✓ Parent → child contribution tracking
   ✓ Low-impact function detection and Makefile CFLAGS suggestions
@@ -64,6 +64,14 @@ class StackFrame:
         self.start_e0 = start_e0
         self.start_e1 = start_e1
 
+class ThreadState:
+    __slots__ = ('stack', 'current_time', 'current_e0', 'current_e1')
+    def __init__(self):
+        self.stack = []
+        self.current_time = 0
+        self.current_e0 = 0
+        self.current_e1 = 0
+
 class FunctionRecord:
     __slots__ = ('name','total_time','times_called','ev0','ev1')
     def __init__(self, name):
@@ -103,7 +111,6 @@ class PriorityQueue:
 # --- Global mappings ---
 functions = {}  # addr -> FunctionRecord
 child_calls = defaultdict(lambda: defaultdict(ChildCall))  # parent_addr -> (child_addr -> ChildCall)
-call_stack = []  # list of StackFrame
 
 class DotManager:
     def __init__(self, program, addr2line_path, verbose, threshold, total, ev0, ev1):
@@ -237,7 +244,7 @@ class DotManager:
         hour = now.tm_hour % 12 or 12
         secs = (self.total) / 1e9
         label = (f"{self.program}\n\t\tRuntime: {secs:.3f} secs\n\t\t"
-                 f"{now.tm_mon+1}/{now.tm_mday}/{now.tm_year} @ "
+                 f"{now.tm_mon}/{now.tm_mday}/{now.tm_year} @ "
                  f"{hour}:{now.tm_min:02d} {ampm}")
 
         fp.write("\n\tgraph [\n"
@@ -400,17 +407,22 @@ def read_uleb128(f):
         shift += 7
     return result, count
 
+def ensure_function_record(address, args):
+    if address not in functions:
+        func_name = addr2name(address, args.addr2line, args.program)
+        functions[address] = FunctionRecord(func_name)
+
+    return functions[address]
+
 def main():
     args = parse_args()
 
     try:
         with open(args.trace, 'rb') as f:
-            current_time = 0
-            current_e0 = 0
-            current_e1 = 0
-
-            total_size = os.path.getsize(args.trace)
-            read_size = 0
+            thread_states = defaultdict(ThreadState)
+            total_time = 0
+            total_e0 = 0
+            total_e1 = 0
 
             total_size = os.path.getsize(args.trace)
             read_size = 0
@@ -440,39 +452,45 @@ def main():
                 thread_id = (entry_tid_addr >> 22) & TID_MASK
                 compressed_addr = entry_tid_addr & ADDR_MASK
                 address = (compressed_addr << 2) + BASE_ADDRESS
+                delta_time_ns = delta_time * 80
+                thread_state = thread_states[thread_id]
 
-                current_time += delta_time * 80
-                current_e0 += delta_evt0
-                current_e1 += delta_evt1
+                thread_state.current_time += delta_time_ns
+                thread_state.current_e0 += delta_evt0
+                thread_state.current_e1 += delta_evt1
+
+                total_time += delta_time_ns
+                total_e0 += delta_evt0
+                total_e1 += delta_evt1
 
                 if is_entry:
                     # -- ENTRY logic --
-                    if address not in functions:
-                        func_name = addr2name(address, args.addr2line, args.program)
-                        functions[address] = FunctionRecord(func_name)
-                    func = functions[address]
+                    func = ensure_function_record(address, args)
                     func.times_called += 1
 
                     # record child call count
-                    if call_stack:
-                        parent = call_stack[-1].addr
+                    if thread_state.stack:
+                        parent = thread_state.stack[-1].addr
                         cc = child_calls[parent][address]
                         cc.times_called += 1
 
                     # push new frame
-                    frame = StackFrame(address, current_time, current_e0, current_e1)
-                    call_stack.append(frame)
+                    frame = StackFrame(address, thread_state.current_time,
+                                       thread_state.current_e0, thread_state.current_e1)
+                    thread_state.stack.append(frame)
 
                 else:
                     # -- EXIT logic --
-                    if not call_stack:
+                    if not thread_state.stack:
                         # unmatched exit, skip
+                        if args.verbose:
+                            print(f"Warning: unmatched exit for thread {thread_id}; skipping.")
                         continue
 
-                    frame = call_stack.pop()
-                    delta_time = current_time - frame.start_time
-                    delta_e0 = current_e0 - frame.start_e0
-                    delta_e1 = current_e1 - frame.start_e1
+                    frame = thread_state.stack.pop()
+                    delta_time = thread_state.current_time - frame.start_time
+                    delta_e0 = thread_state.current_e0 - frame.start_e0
+                    delta_e1 = thread_state.current_e1 - frame.start_e1
 
                     # update function totals
                     func = functions[frame.addr]
@@ -481,44 +499,47 @@ def main():
                     func.ev1 += delta_e1
 
                     # update child call accumulation
-                    if call_stack:
-                        parent = call_stack[-1]
+                    if thread_state.stack:
+                        parent = thread_state.stack[-1]
                         cc = child_calls[parent.addr][frame.addr]
                         cc.total_cycles += delta_time
                         cc.ev0 += delta_e0
                         cc.ev1 += delta_e1
 
-            # Final cleanup for any unmatched function entries
-            if call_stack:
-                if args.verbose:
-                    print(f"Warning: {len(call_stack)} unmatched function entries detected. Processing them as incomplete frames.")
+            # Final cleanup for any unmatched function entries.
+            for thread_id, thread_state in thread_states.items():
+                if not thread_state.stack:
+                    continue
 
-                for i, frame in enumerate(call_stack):
-                    delta_time = current_time - frame.start_time
-                    delta_e0 = current_e0 - frame.start_e0
-                    delta_e1 = current_e1 - frame.start_e1
+                if args.verbose:
+                    print(f"Warning: thread {thread_id} has {len(thread_state.stack)} unmatched function entries. Processing them as incomplete frames.")
+
+                for i, frame in enumerate(thread_state.stack):
+                    delta_time = thread_state.current_time - frame.start_time
+                    delta_e0 = thread_state.current_e0 - frame.start_e0
+                    delta_e1 = thread_state.current_e1 - frame.start_e1
 
                     func = functions[frame.addr]
                     if args.verbose:
-                        print(f"  Function: {func.name} at depth {i}")
+                        print(f"  Thread {thread_id}: function {func.name} at depth {i}")
                     func.total_time += delta_time
                     func.ev0 += delta_e0
                     func.ev1 += delta_e1
 
                     if i > 0:
-                        parent = call_stack[i - 1].addr
+                        parent = thread_state.stack[i - 1].addr
                         cc = child_calls[parent][frame.addr]
                         cc.total_cycles += delta_time
                         cc.ev0 += delta_e0
                         cc.ev1 += delta_e1
 
             # Suggest some functions the user can remove from intrumenstation after the first run
-            suggest_exclude_functions(current_time, current_e0, current_e1, args.exclude_time_threshold, args.exclude_ev_threshold)
+            suggest_exclude_functions(total_time, total_e0, total_e1, args.exclude_time_threshold, args.exclude_ev_threshold)
 
-            dm = DotManager(args.program, args.addr2line, args.verbose, args.percentage, current_time, args.ev0_label, args.ev1_label)
+            dm = DotManager(args.program, args.addr2line, args.verbose, args.percentage, total_time, args.ev0_label, args.ev1_label)
             dm.create_dot_file()
     except FileNotFoundError:
-        print(f"Error: file '{args.infile}' not found.\n\n")
+        print(f"Error: file '{args.trace}' not found.\n\n")
         usage()
     except Exception as e:
         print("An error occurred:")
