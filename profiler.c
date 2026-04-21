@@ -3,6 +3,7 @@
 
 #include <kos/thread.h>
 #include <kos/mutex.h>
+#include <arch/irq.h>
 #include <arch/timer.h>
 
 #include <dc/perfctr.h>
@@ -109,6 +110,10 @@ static int __attribute__ ((no_instrument_function)) profiler_unlock_io(void) {
     return mutex_unlock(&io_lock);
 }
 
+static inline bool __attribute__ ((no_instrument_function)) profiler_in_irq(void) {
+    return inside_int != 0;
+}
+
 static size_t __attribute__ ((no_instrument_function)) encode_uleb128(uint32_t value, uint8_t *out) {
     /* Fast path: single-byte encoding (value < 128).
      * Very common for scaled_time and event deltas. */
@@ -212,7 +217,7 @@ static inline bool __attribute__((no_instrument_function)) thread_supports_tls(v
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {
     (void)callsite;
 
-    if(__predict_false(fp == NULL))
+    if(__predict_false(fp == NULL || profiler_in_irq()))
         return;
 
     if(__predict_false(!thread_supports_tls()))
@@ -229,7 +234,7 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void *this, void *callsite) {
     (void)callsite;
 
-    if(__predict_false(fp == NULL))
+    if(__predict_false(fp == NULL || profiler_in_irq()))
         return;
 
     if(__predict_false(!thread_supports_tls()))
