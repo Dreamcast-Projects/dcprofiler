@@ -204,10 +204,21 @@ static void __attribute__ ((no_instrument_function)) cleanup(void) {
     }
 }
 
+static inline bool __attribute__((no_instrument_function)) thread_supports_tls(void) {
+    kthread_t *th = thd_get_current();
+    return th && !(th->flags & THD_DISABLE_TLS);
+}
+
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {
     (void)callsite;
 
-    if(__predict_false(fp == NULL || tls_busy))
+    if(__predict_false(fp == NULL))
+        return;
+
+    if(__predict_false(!thread_supports_tls()))
+        return;
+
+    if(__predict_false(tls_busy))
         return;
 
     tls_busy = true;
@@ -218,7 +229,13 @@ void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void *this, void *callsite) {
     (void)callsite;
 
-    if(__predict_false(fp == NULL || tls_busy))
+    if(__predict_false(fp == NULL))
+        return;
+
+    if(__predict_false(!thread_supports_tls()))
+        return;
+
+    if(__predict_false(tls_busy))
         return;
 
     tls_busy = true;
