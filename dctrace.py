@@ -325,9 +325,9 @@ def parse_args():
     p.add_argument('-ev0', '--ev0-label', default='ev0', help='Custom label for ev0 (default: ev0)')
     p.add_argument('-ev1', '--ev1-label', default='ev1', help='Custom label for ev1 (default: ev1)')
     p.add_argument('--xt', '--ex-time', dest='exclude_time_threshold', type=float, default=3.0,
-               help='Suggest exclude for functions below this % of runtime (default: 3.0)')
+               help='Suggest exclude for functions below this %% of runtime (default: 3.0)')
     p.add_argument('--xe', '--ex-ev', dest='exclude_ev_threshold', type=float, default=1.0,
-               help='Suggest exclude for functions below this % of ev0/ev1 usage (default: 1.0)')
+               help='Suggest exclude for functions below this %% of ev0/ev1 usage (default: 1.0)')
     p.add_argument('program', help='path to ELF executable')
     return p.parse_args()
 

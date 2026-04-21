@@ -5,7 +5,8 @@
 #include <kos/mutex.h>
 #include <arch/timer.h>
 
-#include <dc/perf_monitor.h>
+#include <dc/perfctr.h>
+
 
 /*
  * Dreamcast Function Profiler – Low-overhead instrumentation for function entry/exit
@@ -47,7 +48,7 @@
  * Paired with `dctrace.py` to decode, resolve symbols, and generate call graphs.
  */
 
-/* Use TLS to keep things separate */ 
+/* Use TLS to keep things separate */
 #define thread_local _Thread_local
 
 #define BUFFER_SIZE    (1024 * 8)
@@ -71,6 +72,7 @@ static FILE *fp;
 static mutex_t io_lock = MUTEX_INITIALIZER;
 
 /* TLS buffer management */
+static thread_local bool     tls_busy;
 static thread_local uint8_t *tls_ptr;
 static thread_local size_t   tls_buffer_idx;
 static thread_local uint8_t  tls_buffer[BUFFER_SIZE] __attribute__((aligned(32)));
@@ -89,10 +91,28 @@ static inline void  __attribute__ ((no_instrument_function)) write_u32_unaligned
     dst[3] = (uint8_t)((value >> 24) & 0xFF);
 }
 
+/*
+ * Avoid KOS header inline helpers in the profiling path: when this file is
+ * built with -finstrument-functions, those inline bodies can themselves be
+ * instrumented and recurse back into __cyg_profile_func_*.
+ */
+static uint64_t __attribute__ ((no_instrument_function)) profiler_now_ns(void) {
+    timer_val_t time = __dreamcast_get_ticks();
+    return (uint64_t)time.secs * 1000000000ULL + (uint64_t)time.ticks * 80ULL;
+}
+
+static int __attribute__ ((no_instrument_function)) profiler_lock_io(void) {
+    return mutex_lock_timed(&io_lock, 0);
+}
+
+static int __attribute__ ((no_instrument_function)) profiler_unlock_io(void) {
+    return mutex_unlock(&io_lock);
+}
+
 static size_t __attribute__ ((no_instrument_function)) encode_uleb128(uint32_t value, uint8_t *out) {
     /* Fast path: single-byte encoding (value < 128).
      * Very common for scaled_time and event deltas. */
-    if (value < 0x80) {
+    if(value < 0x80) {
         out[0] = (uint8_t)value;
         return 1;
     }
@@ -114,7 +134,7 @@ static void __attribute__ ((no_instrument_function)) init_tls(void) {
     tls_thread_id = th->tid & TID_MASK; /* Reserve bit 31 for entry/exit */
     tls_buffer_idx = 0;
     tls_ptr = tls_buffer;
-    tls_last_time = timer_ns_gettime64();
+    tls_last_time = profiler_now_ns();
     tls_last_event0 = perf_cntr_count(PRFC0);
     tls_last_event1 = perf_cntr_count(PRFC1);
 
@@ -122,10 +142,10 @@ static void __attribute__ ((no_instrument_function)) init_tls(void) {
 }
 
 static void __attribute__ ((no_instrument_function, hot)) create_entry(void *this, uint32_t flag) {
-    if(__unlikely(!tls_inited))
+    if(__predict_false(!tls_inited))
         init_tls();
-    
-    uint64_t now = timer_ns_gettime64();
+
+    uint64_t now = profiler_now_ns();
     uint64_t e0  = perf_cntr_count(PRFC0);
     uint64_t e1  = perf_cntr_count(PRFC1);
 
@@ -153,10 +173,12 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
     tls_last_event1 = e1;
 
     /* When this thread’s buffer is full, flush under lock */
-    if(__unlikely(tls_buffer_idx >= BUFFER_SIZE - MAX_ENTRY_SIZE)) {
-        mutex_lock(&io_lock);
-        write(fd, tls_buffer, tls_buffer_idx);
-        mutex_unlock(&io_lock);
+    if(__predict_false(tls_buffer_idx >= BUFFER_SIZE - MAX_ENTRY_SIZE)) {
+        if(profiler_lock_io() == 0) {
+            write(fd, tls_buffer, tls_buffer_idx);
+            profiler_unlock_io();
+        }
+
         tls_ptr = tls_buffer;
         tls_buffer_idx = 0;
     }
@@ -164,11 +186,12 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
 
 static void __attribute__ ((no_instrument_function)) cleanup(void) {
     if(tls_buffer_idx > 0) {
-        mutex_lock(&io_lock);
-        write(fd, tls_buffer, tls_buffer_idx);
-        mutex_unlock(&io_lock);
+        if(profiler_lock_io() == 0) {
+            write(fd, tls_buffer, tls_buffer_idx);
+            profiler_unlock_io();
+        }
     }
-    
+
     perf_cntr_stop(PRFC0);
     perf_cntr_stop(PRFC1);
 
@@ -184,19 +207,23 @@ static void __attribute__ ((no_instrument_function)) cleanup(void) {
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_enter(void *this, void *callsite) {
     (void)callsite;
 
-    if(__unlikely(fp == NULL))
+    if(__predict_false(fp == NULL || tls_busy))
         return;
 
+    tls_busy = true;
     create_entry(this, ENTRY_FLAG);
+    tls_busy = false;
 }
 
 void __attribute__ ((no_instrument_function, hot)) __cyg_profile_func_exit(void *this, void *callsite) {
     (void)callsite;
 
-    if(__unlikely(fp == NULL))
+    if(__predict_false(fp == NULL || tls_busy))
         return;
 
+    tls_busy = true;
     create_entry(this, EXIT_FLAG);
+    tls_busy = false;
 }
 
 void __attribute__ ((no_instrument_function, constructor)) main_constructor(void) {
