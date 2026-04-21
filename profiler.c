@@ -185,6 +185,9 @@ static void __attribute__ ((no_instrument_function, hot)) create_entry(void *thi
 }
 
 static void __attribute__ ((no_instrument_function)) cleanup(void) {
+    if(fp == NULL)
+        return;
+
     if(tls_buffer_idx > 0) {
         if(profiler_lock_io() == 0) {
             write(fd, tls_buffer, tls_buffer_idx);
@@ -198,10 +201,8 @@ static void __attribute__ ((no_instrument_function)) cleanup(void) {
     perf_cntr_clear(PRFC0);
     perf_cntr_clear(PRFC1);
 
-    if(fp != NULL) {
-        fclose(fp);
-        fp = NULL;
-    }
+    fclose(fp);
+    fp = NULL;
 }
 
 static inline bool __attribute__((no_instrument_function)) thread_supports_tls(void) {
